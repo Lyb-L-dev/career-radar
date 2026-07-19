@@ -1,0 +1,110 @@
+# Career Radar 可公开提交的脱敏配置模板。
+# 首次使用请复制为 config.yaml；真实个人画像、公司名单和本机路径只写入 config.yaml。
+app:
+  timezone: Asia/Shanghai
+  database_path: data/career_radar.db
+  company_catalog_path: data/company_candidates.json
+  output_dir: output
+  log_dir: logs
+  daily_run_time: 08:00
+  report_retention_days: 90
+  output_match_levels: [high, medium, low]
+  notify_match_levels: [high]
+  notify_profile_fit_levels: [high, medium, unknown]
+  notify_max_difficulty_score: 8
+  include_updates_in_output: true
+  write_empty_report: false
+  cors_origins:
+    - http://127.0.0.1:7100
+    - http://localhost:7100
+
+crawler:
+  render_mode: auto
+  request_delay_min_seconds: 5
+  request_delay_max_seconds: 10
+  request_timeout_seconds: 30
+  playwright_timeout_seconds: 45
+  playwright_wait_after_load_ms: 1500
+  max_pages_per_company: 30
+  max_follow_links_per_page: 100
+  max_query_variants_per_path: 3
+  max_links_in_prompt: 500
+  max_download_bytes: 10000000
+  min_static_text_chars: 500
+  user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
+
+llm:
+  provider: deepseek
+  model: deepseek-v4-flash
+  base_url: https://api.deepseek.com
+  request_timeout_seconds: 120
+  max_output_tokens: 30000
+  max_input_chars: 140000
+  chunk_overlap_chars: 4000
+  max_retries: 3
+  # 使用不支持 DeepSeek thinking 扩展参数的兼容代理时改为 false。
+  disable_thinking: true
+
+# 没有安装 Agent Reach/OpenCLI 时保持关闭；企业官网监控不受影响。
+reputation:
+  enabled: false
+  opencli_command: opencli
+  platforms: [xiaohongshu, zhihu, weibo, nowcoder]
+  results_per_query: 5
+  detail_results_per_platform: 2
+  command_timeout_seconds: 90
+  max_evidence_items: 40
+  max_evidence_chars: 4000
+
+# 只填写求职判断所需的非敏感信息，不要提交姓名、电话、学号或精确住址。
+candidate:
+  graduation_year: 2026
+  education_level: 普通本科
+  school_background: 非 985/211 普通本科
+  major: 计算机相关专业
+  skills: [Python, MySQL, Git]
+  projects:
+    - 课程或个人项目：请说明使用的技术、负责的工作和可量化结果
+  internships: []
+  target_roles: [Python 后端, 数据开发, 测试开发]
+  preferred_locations: [福州, 厦门, 上海, 杭州, 深圳]
+  salary_range_k: [3, 40]
+  accept_internship: true
+  accept_relocation: true
+  max_difficulty: 8
+  work_types: [校招, 实习]
+  skill_levels:
+    Python: 熟悉
+    MySQL: 熟悉
+    Git: 熟悉
+  excluded_directions: []
+  constraints:
+    - 优先校招、应届生、实习转正或 0-1 年经验岗位
+  notes: 请根据真实情况补充，不要提交可识别个人身份的信息
+
+smtp:
+  enabled: false
+  host: ""
+  port: 465
+  use_ssl: true
+  use_starttls: false
+  username: ""
+  password_env: SMTP_PASSWORD
+  from_address: ""
+  to_addresses: []
+  subject_prefix: "[Career Radar]"
+  jd_summary_chars: 500
+
+companies:
+  - name: 示例公司
+    url: https://example.com/careers
+    company_type: private
+    industry_category: internet
+    province: 福建
+    city: 厦门
+    priority: high
+    monitor_mode: jobs
+    enabled: false
+    discover_from_homepage: false
+    max_pages: 20
+    notes: 请替换为企业官方招聘页；示例默认禁用，避免误访问。

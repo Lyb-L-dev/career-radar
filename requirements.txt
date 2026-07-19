@@ -1,0 +1,12 @@
+# 生产环境依赖。推荐优先执行 `pip install -e .`，本文件便于传统服务器部署。
+anthropic>=0.55,<2
+beautifulsoup4>=4.12,<5
+fastapi>=0.115,<1
+openai>=2.37,<3
+playwright>=1.49,<2
+pydantic>=2.8,<3
+python-dotenv>=1.0,<2
+PyYAML>=6.0,<7
+requests>=2.32,<3
+tzdata>=2025.2; platform_system == "Windows"
+uvicorn>=0.34,<1
