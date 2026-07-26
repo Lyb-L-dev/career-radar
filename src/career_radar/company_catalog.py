@@ -57,7 +57,8 @@ def preliminary_fit(item: dict[str, Any], profile: CandidateProfile) -> tuple[in
     """按地区和名称技术信号计算保守初筛分，不冒充真实岗位录取难度。"""
 
     score = 52
-    reasons = ["工信部建议继续支持的重点专精特新“小巨人”企业"]
+    quality_signals = list(item.get("qualitySignals") or [])
+    reasons = [quality_signals[0] if quality_signals else "进入政府公开的优质企业候选名单"]
     province = item.get("province")
     city = item.get("city")
     if province == "福建":
@@ -97,6 +98,7 @@ def catalog_response(
     city: str | None = None,
     fit_level: str | None = None,
     decision: str | None = None,
+    channel_status: str | None = None,
     source_key: str | None = None,
     tech_only: bool = False,
     page: int = 1,
@@ -119,11 +121,22 @@ def catalog_response(
             "fitReasons": reasons,
             "decision": item_decision,
             "monitored": is_monitored,
-            "officialWebsite": state.get("official_website"),
+            "officialWebsite": state.get("official_website") or raw.get("officialWebsite"),
             "careersUrl": state.get("careers_url"),
-            "companyType": state.get("company_type") or "other",
+            "companyType": (
+                state.get("company_type") or raw.get("suggestedCompanyType") or "other"
+            ),
             "industryCategory": (
                 state.get("industry_category") or raw.get("suggestedIndustryCategory") or "other"
+            ),
+            "recruitmentChannelStatus": state.get("recruitment_channel_status")
+            or "official_site_pending",
+            "parentCompany": state.get("parent_company"),
+            "groupRecruitmentUrl": state.get("group_recruitment_url"),
+            "attributionKeywords": (
+                json.loads(state["attribution_keywords_json"])
+                if state.get("attribution_keywords_json")
+                else []
             ),
             "reviewNote": state.get("note"),
             "reviewedAt": state.get("updated_at"),
@@ -148,7 +161,9 @@ def catalog_response(
             continue
         if decision and item_decision != decision:
             continue
-        if source_key and item.get("sourceKey") != source_key:
+        if channel_status and item["recruitmentChannelStatus"] != channel_status:
+            continue
+        if source_key and source_key not in (item.get("sourceKeys") or [item.get("sourceKey")]):
             continue
         if tech_only and not item.get("techSignals"):
             continue

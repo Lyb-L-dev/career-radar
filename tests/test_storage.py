@@ -229,16 +229,77 @@ def test_schema_contains_page_visit_and_candidate_state_tables(tmp_path: Path) -
         candidate_table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='company_candidate_state'"
         ).fetchone()
+        source_table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='company_recruitment_sources'"
+        ).fetchone()
         reputation_scan_table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='job_reputation_scans'"
         ).fetchone()
         reputation_evidence_table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='job_reputation_evidence'"
         ).fetchone()
+        wechat_account_table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='company_wechat_accounts'"
+        ).fetchone()
+        wechat_scan_table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='wechat_recruitment_scans'"
+        ).fetchone()
+        wechat_article_table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='wechat_recruitment_articles'"
+        ).fetchone()
         version = connection.execute("PRAGMA user_version").fetchone()[0]
 
     assert table == ("web_page_visits",)
     assert candidate_table == ("company_candidate_state",)
+    assert source_table == ("company_recruitment_sources",)
     assert reputation_scan_table == ("job_reputation_scans",)
     assert reputation_evidence_table == ("job_reputation_evidence",)
-    assert version == 5
+    assert wechat_account_table == ("company_wechat_accounts",)
+    assert wechat_scan_table == ("wechat_recruitment_scans",)
+    assert wechat_article_table == ("wechat_recruitment_articles",)
+    assert version == 8
+
+
+def test_version_six_candidate_state_is_upgraded_without_losing_rows(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "legacy.db"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE company_candidate_state (
+                candidate_id TEXT PRIMARY KEY,
+                decision TEXT NOT NULL,
+                official_website TEXT,
+                careers_url TEXT,
+                company_type TEXT,
+                industry_category TEXT,
+                note TEXT,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO company_candidate_state(
+                candidate_id, decision, note, updated_at
+            ) VALUES ('legacy-candidate', 'shortlisted', '保留我', '2026-07-20');
+            PRAGMA user_version = 6;
+            """
+        )
+
+    JobStorage(database).initialize()
+
+    with sqlite3.connect(database) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT * FROM company_candidate_state WHERE candidate_id = ?",
+            ("legacy-candidate",),
+        ).fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+
+    assert row is not None
+    assert row["note"] == "保留我"
+    assert row["recruitment_channel_status"] == "official_site_pending"
+    assert row["attribution_keywords_json"] is None
+    assert version == 8

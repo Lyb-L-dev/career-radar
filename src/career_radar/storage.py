@@ -17,7 +17,7 @@ from .job_merge import (
 )
 from .models import JobPosting, StoredJobEvent
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
 
 
 def _normalized(value: str | None) -> str:
@@ -198,11 +198,111 @@ class JobStorage:
                     careers_url TEXT,
                     company_type TEXT,
                     industry_category TEXT,
+                    recruitment_channel_status TEXT NOT NULL DEFAULT 'official_site_pending',
+                    parent_company TEXT,
+                    group_recruitment_url TEXT,
+                    attribution_keywords_json TEXT,
                     note TEXT,
                     updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_company_candidate_state_decision
                     ON company_candidate_state(decision, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS company_recruitment_sources (
+                    source_id TEXT PRIMARY KEY,
+                    candidate_id TEXT NOT NULL,
+                    source_kind TEXT NOT NULL CHECK(source_kind IN (
+                        'official_homepage', 'official_careers', 'group_recruitment',
+                        'government_notice', 'official_account', 'official_document',
+                        'official_email', 'third_party_lead'
+                    )),
+                    verification_status TEXT NOT NULL CHECK(verification_status IN (
+                        'verified_official', 'pending', 'rejected'
+                    )),
+                    material_type TEXT NOT NULL CHECK(material_type IN (
+                        'webpage', 'pdf', 'image', 'text', 'email'
+                    )),
+                    title TEXT NOT NULL,
+                    source_url TEXT,
+                    content TEXT,
+                    published_at TEXT,
+                    parent_company TEXT,
+                    imported_job_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_company_recruitment_sources_candidate
+                    ON company_recruitment_sources(candidate_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_company_recruitment_sources_verification
+                    ON company_recruitment_sources(verification_status, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS company_wechat_accounts (
+                    account_id TEXT PRIMARY KEY,
+                    candidate_id TEXT NOT NULL,
+                    account_name TEXT NOT NULL,
+                    account_identifier TEXT,
+                    biz_id TEXT,
+                    scope TEXT NOT NULL CHECK(scope IN ('company', 'group')),
+                    parent_company TEXT,
+                    attribution_keywords_json TEXT NOT NULL,
+                    verification_status TEXT NOT NULL CHECK(verification_status IN (
+                        'verified', 'pending', 'rejected'
+                    )),
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(candidate_id, account_name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_company_wechat_accounts_candidate
+                    ON company_wechat_accounts(candidate_id, enabled, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS wechat_recruitment_scans (
+                    scan_id TEXT PRIMARY KEY,
+                    candidate_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN (
+                        'pending', 'running', 'completed', 'partial', 'failed',
+                        'interrupted'
+                    )),
+                    payload_json TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    finished_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_wechat_recruitment_scans_candidate
+                    ON wechat_recruitment_scans(candidate_id, started_at DESC);
+
+                CREATE TABLE IF NOT EXISTS wechat_recruitment_articles (
+                    article_id TEXT PRIMARY KEY,
+                    candidate_id TEXT NOT NULL,
+                    account_id TEXT,
+                    title TEXT NOT NULL,
+                    account_name TEXT,
+                    account_identifier TEXT,
+                    biz_id TEXT,
+                    source_url TEXT NOT NULL,
+                    summary TEXT,
+                    content TEXT NOT NULL,
+                    published_at TEXT,
+                    classification TEXT NOT NULL CHECK(classification IN (
+                        'official_recruitment', 'third_party_lead', 'non_recruitment'
+                    )),
+                    verification_status TEXT NOT NULL CHECK(verification_status IN (
+                        'verified_official', 'pending', 'rejected'
+                    )),
+                    reason TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    source_id TEXT,
+                    imported_job_id TEXT,
+                    first_seen_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(candidate_id, source_url),
+                    FOREIGN KEY(account_id) REFERENCES company_wechat_accounts(account_id)
+                        ON DELETE SET NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_wechat_recruitment_articles_candidate
+                    ON wechat_recruitment_articles(candidate_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_wechat_recruitment_articles_classification
+                    ON wechat_recruitment_articles(classification, updated_at DESC);
 
                 CREATE TABLE IF NOT EXISTS job_reputation_scans (
                     scan_id TEXT PRIMARY KEY,
@@ -233,8 +333,109 @@ class JobStorage:
                 );
                 CREATE INDEX IF NOT EXISTS idx_job_reputation_evidence_platform
                     ON job_reputation_evidence(platform, scan_id);
+
+                CREATE TABLE IF NOT EXISTS application_runs (
+                    application_id TEXT PRIMARY KEY,
+                    job_entity_key TEXT NOT NULL,
+                    job_content_hash TEXT NOT NULL,
+                    profile_hash TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN (
+                        'created', 'evaluating', 'waiting_for_approval', 'drafting',
+                        'factual_review', 'recruiter_review', 'revising', 'rendering',
+                        'verifying', 'ready', 'rejected', 'failed'
+                    )),
+                    failed_step TEXT,
+                    error TEXT,
+                    cover_letter_mode TEXT NOT NULL
+                        CHECK(cover_letter_mode IN ('auto', 'always', 'never')),
+                    resume_page_target INTEGER NOT NULL
+                        CHECK(resume_page_target BETWEEN 1 AND 3),
+                    job_snapshot_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    approved_at TEXT,
+                    completed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_application_runs_job_time
+                    ON application_runs(job_entity_key, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_application_runs_status_time
+                    ON application_runs(status, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS application_profile_snapshots (
+                    application_id TEXT PRIMARY KEY,
+                    profile_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    source_path TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(application_id) REFERENCES application_runs(application_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS application_evaluations (
+                    application_id TEXT PRIMARY KEY,
+                    prompt_version TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(application_id) REFERENCES application_runs(application_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS application_drafts (
+                    application_id TEXT NOT NULL,
+                    document_kind TEXT NOT NULL CHECK(document_kind IN ('resume', 'cover_letter')),
+                    version INTEGER NOT NULL CHECK(version >= 1),
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(application_id, document_kind, version),
+                    FOREIGN KEY(application_id) REFERENCES application_runs(application_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS application_reviews (
+                    application_id TEXT NOT NULL,
+                    reviewer TEXT NOT NULL CHECK(reviewer IN ('factual', 'recruiter_ats')),
+                    version INTEGER NOT NULL CHECK(version >= 1),
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(application_id, reviewer, version),
+                    FOREIGN KEY(application_id) REFERENCES application_runs(application_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS application_artifacts (
+                    artifact_id TEXT PRIMARY KEY,
+                    application_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(application_id) REFERENCES application_runs(application_id)
+                        ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_application_artifacts_run
+                    ON application_artifacts(application_id, created_at DESC);
                 """
             )
+            candidate_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(company_candidate_state)"
+                ).fetchall()
+            }
+            candidate_migrations = {
+                "recruitment_channel_status": (
+                    "TEXT NOT NULL DEFAULT 'official_site_pending'"
+                ),
+                "parent_company": "TEXT",
+                "group_recruitment_url": "TEXT",
+                "attribution_keywords_json": "TEXT",
+            }
+            for column, declaration in candidate_migrations.items():
+                if column not in candidate_columns:
+                    connection.execute(
+                        f"ALTER TABLE company_candidate_state "
+                        f"ADD COLUMN {column} {declaration}"
+                    )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def _identity_matches(

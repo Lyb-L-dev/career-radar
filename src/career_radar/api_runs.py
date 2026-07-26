@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from .llm import LLMError
 from .run_manager import RunConflictError, RunManager
 from .web_repository import WebRepository
 
@@ -53,6 +54,8 @@ def create_runs_router(repository: WebRepository, manager: RunManager) -> APIRou
             else:
                 # 保留原三参数形式，兼容现有扩展代码和测试替身。
                 run = manager.create(payload.scope, payload.sendEmail, payload.companyId)
+        except LLMError as exc:
+            raise HTTPException(422, f"扫描前检查失败：{exc}") from exc
         except (RunConflictError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
         return {"ok": True, "runId": run["id"]}
@@ -63,6 +66,8 @@ def create_runs_router(repository: WebRepository, manager: RunManager) -> APIRou
             raise HTTPException(404, "运行任务不存在")
         try:
             retry = manager.create("failed", False)
+        except LLMError as exc:
+            raise HTTPException(422, f"扫描前检查失败：{exc}") from exc
         except (RunConflictError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
         return {"ok": True, "runId": retry["id"]}

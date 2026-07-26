@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 .env
 /config.yaml
+/private/
 *.bak
 *.tmp
 data/*.db

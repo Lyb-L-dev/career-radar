@@ -20,8 +20,10 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from .config import load_settings
-from .models import CompanyConfig, JobPosting, ProfileFitLevel
+from .models import CompanyConfig, JobPosting, ProfileFitLevel, Settings
 from .storage import JobStorage
+
+_UNSET = object()
 
 
 def company_id(name: str) -> str:
@@ -236,8 +238,8 @@ class WebRepository:
                     ),
                 )
 
-    def _connect(self) -> sqlite3.Connection:
-        settings = self.settings
+    def _connect(self, settings: Settings | None = None) -> sqlite3.Connection:
+        settings = settings or self.settings
         JobStorage(settings.app.database_path).initialize()
         connection = sqlite3.connect(settings.app.database_path, timeout=30)
         connection.row_factory = sqlite3.Row
@@ -246,10 +248,10 @@ class WebRepository:
         return connection
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, settings: Settings | None = None) -> Iterator[sqlite3.Connection]:
         """提交或回滚后显式关闭连接，保证 Windows 下可立即备份数据库。"""
 
-        connection = self._connect()
+        connection = self._connect(settings)
         try:
             with connection:
                 yield connection
@@ -281,10 +283,10 @@ class WebRepository:
         self,
         row: sqlite3.Row,
         *,
+        settings: Settings,
         history: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         job = JobPosting.model_validate_json(row["payload_json"])
-        settings = self.settings
         configured_company = next(
             (company for company in settings.companies if company.name == job.company),
             None,
@@ -403,7 +405,8 @@ class WebRepository:
         }
 
     def list_jobs(self) -> list[dict[str, Any]]:
-        with self.transaction() as connection:
+        settings = self.settings
+        with self.transaction(settings) as connection:
             rows = connection.execute(
                 """
                 SELECT j.*,
@@ -417,7 +420,7 @@ class WebRepository:
                 ORDER BY j.updated_at DESC
                 """
             ).fetchall()
-        return [self._job_json(row) for row in rows]
+        return [self._job_json(row, settings=settings) for row in rows]
 
     def search_jobs(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """在 SQLite 中筛选岗位，避免搜索时反序列化完整岗位表。"""
@@ -425,7 +428,8 @@ class WebRepository:
         # 转义 LIKE 的通配符，使用户输入的 ``%`` 和 ``_`` 按普通字符搜索。
         escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"
-        with self.transaction() as connection:
+        settings = self.settings
+        with self.transaction(settings) as connection:
             rows = connection.execute(
                 """
                 SELECT j.*,
@@ -444,10 +448,11 @@ class WebRepository:
                 """,
                 (pattern, pattern, pattern, limit),
             ).fetchall()
-        return [self._job_json(row) for row in rows]
+        return [self._job_json(row, settings=settings) for row in rows]
 
     def get_job(self, entity_key: str) -> dict[str, Any] | None:
-        with self.transaction() as connection:
+        settings = self.settings
+        with self.transaction(settings) as connection:
             row = connection.execute(
                 """
                 SELECT j.*,
@@ -464,7 +469,7 @@ class WebRepository:
             if row is None:
                 return None
             history = self._history(connection, entity_key)
-        return self._job_json(row, history=history)
+        return self._job_json(row, settings=settings, history=history)
 
     def set_job_state(self, entity_keys: list[str], field: str, value: bool) -> None:
         columns = {
@@ -543,10 +548,16 @@ class WebRepository:
             elif latest_status in {"running", "waiting"} and latest_run.get("status") in {
                 "pending",
                 "running",
+                "stopping",
             }:
                 status = "scanning"
             elif latest_status == "failed":
                 status = "robots_blocked" if "robots" in (last_error or "").casefold() else "request_failed"
+            elif (
+                latest_status == "skipped"
+                and latest_company_run.get("skipReason") == "user_stop"
+            ):
+                status = "active" if stat and stat["last_scan_at"] else "pending_verification"
             elif latest_status == "skipped":
                 status = "robots_blocked" if "robots" in (last_error or "").casefold() else "structure_error"
             elif latest_status == "success" or (stat and stat["last_scan_at"]):
@@ -581,6 +592,9 @@ class WebRepository:
                     "recentJobCount": stat["job_count"] if stat else 0,
                     "consecutiveFailures": consecutive_failures,
                     "maxPages": company.max_pages or settings.crawler.max_pages_per_company,
+                    "recruitmentChannel": company.recruitment_channel.value,
+                    "parentCompany": company.parent_company,
+                    "attributionKeywords": company.attribution_keywords,
                     "enabled": company.enabled,
                     "note": company.notes,
                     "discoveredEntry": company.url,
@@ -608,13 +622,17 @@ class WebRepository:
         candidate_ids: list[str],
         *,
         decision: str,
-        official_website: str | None = None,
-        careers_url: str | None = None,
-        company_type: str | None = None,
-        industry_category: str | None = None,
-        note: str | None = None,
+        official_website: str | None | object = _UNSET,
+        careers_url: str | None | object = _UNSET,
+        company_type: str | None | object = _UNSET,
+        industry_category: str | None | object = _UNSET,
+        recruitment_channel_status: str | object = _UNSET,
+        parent_company: str | None | object = _UNSET,
+        group_recruitment_url: str | None | object = _UNSET,
+        attribution_keywords: list[str] | None | object = _UNSET,
+        note: str | None | object = _UNSET,
     ) -> None:
-        """幂等保存收藏/排除决定及人工核验后的官网信息。"""
+        """幂等保存审批与招聘渠道；未传字段保留，显式 ``None`` 可清空。"""
 
         now = datetime.now(ZoneInfo(self.settings.app.timezone)).isoformat(timespec="seconds")
         with self.transaction() as connection:
@@ -628,24 +646,40 @@ class WebRepository:
                     "careers_url": careers_url,
                     "company_type": company_type,
                     "industry_category": industry_category,
+                    "recruitment_channel_status": recruitment_channel_status,
+                    "parent_company": parent_company,
+                    "group_recruitment_url": group_recruitment_url,
+                    "attribution_keywords_json": (
+                        json.dumps(attribution_keywords, ensure_ascii=False)
+                        if attribution_keywords is not _UNSET
+                        and attribution_keywords is not None
+                        else attribution_keywords
+                    ),
                     "note": note,
                 }
-                if previous is not None:
-                    for key in values:
-                        if values[key] is None:
-                            values[key] = previous[key]
+                for key in values:
+                    if values[key] is _UNSET:
+                        values[key] = previous[key] if previous is not None else None
+                if values["recruitment_channel_status"] is None:
+                    values["recruitment_channel_status"] = "official_site_pending"
                 connection.execute(
                     """
                     INSERT INTO company_candidate_state(
                         candidate_id, decision, official_website, careers_url,
-                        company_type, industry_category, note, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        company_type, industry_category, recruitment_channel_status,
+                        parent_company, group_recruitment_url,
+                        attribution_keywords_json, note, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(candidate_id) DO UPDATE SET
                         decision = excluded.decision,
                         official_website = excluded.official_website,
                         careers_url = excluded.careers_url,
                         company_type = excluded.company_type,
                         industry_category = excluded.industry_category,
+                        recruitment_channel_status = excluded.recruitment_channel_status,
+                        parent_company = excluded.parent_company,
+                        group_recruitment_url = excluded.group_recruitment_url,
+                        attribution_keywords_json = excluded.attribution_keywords_json,
                         note = excluded.note,
                         updated_at = excluded.updated_at
                     """,
@@ -656,10 +690,391 @@ class WebRepository:
                         values["careers_url"],
                         values["company_type"],
                         values["industry_category"],
+                        values["recruitment_channel_status"],
+                        values["parent_company"],
+                        values["group_recruitment_url"],
+                        values["attribution_keywords_json"],
                         values["note"],
                         now,
                     ),
                 )
+
+    def list_candidate_sources(self, candidate_id: str) -> list[dict[str, Any]]:
+        """按时间倒序返回人工登记的招聘来源，不读取或暴露本地文件。"""
+
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT source_id, candidate_id, source_kind, verification_status,
+                       material_type, title, source_url, content, published_at,
+                       parent_company, imported_job_id, created_at, updated_at
+                FROM company_recruitment_sources
+                WHERE candidate_id = ?
+                ORDER BY created_at DESC, source_id DESC
+                """,
+                (candidate_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_candidate_source(self, source: dict[str, Any]) -> None:
+        """保存一条人工核验来源；第三方线索与官方证据由调用层严格区分。"""
+
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO company_recruitment_sources(
+                    source_id, candidate_id, source_kind, verification_status,
+                    material_type, title, source_url, content, published_at,
+                    parent_company, imported_job_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    verification_status = excluded.verification_status,
+                    material_type = excluded.material_type,
+                    title = excluded.title,
+                    source_url = excluded.source_url,
+                    content = excluded.content,
+                    published_at = excluded.published_at,
+                    parent_company = excluded.parent_company,
+                    imported_job_id = COALESCE(
+                        excluded.imported_job_id,
+                        company_recruitment_sources.imported_job_id
+                    ),
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    source["source_id"],
+                    source["candidate_id"],
+                    source["source_kind"],
+                    source["verification_status"],
+                    source["material_type"],
+                    source["title"],
+                    source.get("source_url"),
+                    source.get("content"),
+                    source.get("published_at"),
+                    source.get("parent_company"),
+                    source.get("imported_job_id"),
+                    source["created_at"],
+                    source["updated_at"],
+                ),
+            )
+
+    def set_candidate_source_imported_job(
+        self,
+        source_id: str,
+        entity_key: str,
+    ) -> None:
+        """记录人工材料已进入招聘通知列表，重复提交时可安全阻止。"""
+
+        now = datetime.now(ZoneInfo(self.settings.app.timezone)).isoformat(timespec="seconds")
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE company_recruitment_sources
+                SET imported_job_id = ?, updated_at = ?
+                WHERE source_id = ?
+                """,
+                (entity_key, now, source_id),
+            )
+
+    def list_wechat_accounts(self, candidate_id: str) -> list[dict[str, Any]]:
+        """返回某候选企业登记的公众号；账号标识是公开身份信息。"""
+
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM company_wechat_accounts
+                WHERE candidate_id = ?
+                ORDER BY enabled DESC, updated_at DESC, account_name
+                """,
+                (candidate_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["enabled"] = bool(item["enabled"])
+            item["attribution_keywords"] = json.loads(
+                item.pop("attribution_keywords_json")
+            )
+            result.append(item)
+        return result
+
+    def get_wechat_account(self, account_id: str) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM company_wechat_accounts WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["enabled"] = bool(item["enabled"])
+        item["attribution_keywords"] = json.loads(
+            item.pop("attribution_keywords_json")
+        )
+        return item
+
+    def save_wechat_account(self, account: dict[str, Any]) -> None:
+        """新增或更新经过人工确认的公众号绑定。"""
+
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO company_wechat_accounts(
+                    account_id, candidate_id, account_name, account_identifier,
+                    biz_id, scope, parent_company, attribution_keywords_json,
+                    verification_status, enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                    account_name = excluded.account_name,
+                    account_identifier = excluded.account_identifier,
+                    biz_id = excluded.biz_id,
+                    scope = excluded.scope,
+                    parent_company = excluded.parent_company,
+                    attribution_keywords_json = excluded.attribution_keywords_json,
+                    verification_status = excluded.verification_status,
+                    enabled = excluded.enabled,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    account["account_id"],
+                    account["candidate_id"],
+                    account["account_name"],
+                    account.get("account_identifier"),
+                    account.get("biz_id"),
+                    account["scope"],
+                    account.get("parent_company"),
+                    json.dumps(
+                        account.get("attribution_keywords") or [],
+                        ensure_ascii=False,
+                    ),
+                    account["verification_status"],
+                    int(bool(account["enabled"])),
+                    account["created_at"],
+                    account["updated_at"],
+                ),
+            )
+
+    def delete_wechat_account(self, account_id: str, candidate_id: str) -> bool:
+        """删除账号绑定；历史文章保留并自动解除外键关联。"""
+
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM company_wechat_accounts
+                WHERE account_id = ? AND candidate_id = ?
+                """,
+                (account_id, candidate_id),
+            )
+        return cursor.rowcount == 1
+
+    def save_wechat_scan(self, payload: dict[str, Any]) -> None:
+        """持久化公众号扫描进度，服务重启后仍可查看最后结果。"""
+
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO wechat_recruitment_scans(
+                    scan_id, candidate_id, status, payload_json,
+                    started_at, updated_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scan_id) DO UPDATE SET
+                    status = excluded.status,
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at,
+                    finished_at = excluded.finished_at
+                """,
+                (
+                    payload["id"],
+                    payload["candidateId"],
+                    payload["status"],
+                    json.dumps(payload, ensure_ascii=False),
+                    payload["startedAt"],
+                    payload["updatedAt"],
+                    payload.get("finishedAt"),
+                ),
+            )
+
+    def get_wechat_scan(self, scan_id: str) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM wechat_recruitment_scans WHERE scan_id = ?",
+                (scan_id,),
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
+    def latest_wechat_scan(self, candidate_id: str) -> dict[str, Any] | None:
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM wechat_recruitment_scans
+                WHERE candidate_id = ?
+                ORDER BY started_at DESC LIMIT 1
+                """,
+                (candidate_id,),
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
+    def recover_interrupted_wechat_scans(self) -> int:
+        """服务重启时把无法继续的进程内任务标记为中断。"""
+
+        now = datetime.now(ZoneInfo(self.settings.app.timezone)).isoformat(
+            timespec="seconds"
+        )
+        recovered = 0
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT scan_id, payload_json
+                FROM wechat_recruitment_scans
+                WHERE status IN ('pending', 'running')
+                """
+            ).fetchall()
+            for row in rows:
+                payload = json.loads(row["payload_json"])
+                payload["status"] = "interrupted"
+                payload["updatedAt"] = now
+                payload["finishedAt"] = now
+                errors = payload.setdefault("errors", [])
+                errors.append("服务重启，原公众号扫描已中断，可重新发起扫描")
+                connection.execute(
+                    """
+                    UPDATE wechat_recruitment_scans
+                    SET status = 'interrupted', payload_json = ?,
+                        updated_at = ?, finished_at = ?
+                    WHERE scan_id = ?
+                    """,
+                    (
+                        json.dumps(payload, ensure_ascii=False),
+                        now,
+                        now,
+                        row["scan_id"],
+                    ),
+                )
+                recovered += 1
+        return recovered
+
+    def save_wechat_article(self, article: dict[str, Any]) -> str:
+        """按候选企业+原文 URL 去重并检测正文或分类变化。"""
+
+        with self.transaction() as connection:
+            previous = connection.execute(
+                """
+                SELECT content_hash, classification, verification_status
+                FROM wechat_recruitment_articles
+                WHERE candidate_id = ? AND source_url = ?
+                """,
+                (article["candidate_id"], article["source_url"]),
+            ).fetchone()
+            event = "new"
+            if previous is not None:
+                event = (
+                    "unchanged"
+                    if (
+                        previous["content_hash"] == article["content_hash"]
+                        and previous["classification"] == article["classification"]
+                        and previous["verification_status"]
+                        == article["verification_status"]
+                    )
+                    else "updated"
+                )
+            connection.execute(
+                """
+                INSERT INTO wechat_recruitment_articles(
+                    article_id, candidate_id, account_id, title, account_name,
+                    account_identifier, biz_id, source_url, summary, content,
+                    published_at, classification, verification_status, reason,
+                    content_hash, source_id, imported_job_id,
+                    first_seen_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(candidate_id, source_url) DO UPDATE SET
+                    account_id = excluded.account_id,
+                    title = excluded.title,
+                    account_name = excluded.account_name,
+                    account_identifier = excluded.account_identifier,
+                    biz_id = excluded.biz_id,
+                    summary = excluded.summary,
+                    content = excluded.content,
+                    published_at = excluded.published_at,
+                    classification = excluded.classification,
+                    verification_status = excluded.verification_status,
+                    reason = excluded.reason,
+                    content_hash = excluded.content_hash,
+                    source_id = COALESCE(
+                        excluded.source_id,
+                        wechat_recruitment_articles.source_id
+                    ),
+                    imported_job_id = COALESCE(
+                        excluded.imported_job_id,
+                        wechat_recruitment_articles.imported_job_id
+                    ),
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    article["article_id"],
+                    article["candidate_id"],
+                    article.get("account_id"),
+                    article["title"],
+                    article.get("account_name"),
+                    article.get("account_identifier"),
+                    article.get("biz_id"),
+                    article["source_url"],
+                    article.get("summary"),
+                    article["content"],
+                    article.get("published_at"),
+                    article["classification"],
+                    article["verification_status"],
+                    article["reason"],
+                    article["content_hash"],
+                    article.get("source_id"),
+                    article.get("imported_job_id"),
+                    article["first_seen_at"],
+                    article["updated_at"],
+                ),
+            )
+        return event
+
+    def set_wechat_article_imports(
+        self,
+        article_id: str,
+        *,
+        source_id: str,
+        imported_job_id: str | None,
+    ) -> None:
+        now = datetime.now(ZoneInfo(self.settings.app.timezone)).isoformat(timespec="seconds")
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE wechat_recruitment_articles
+                SET source_id = ?, imported_job_id = COALESCE(?, imported_job_id),
+                    updated_at = ?
+                WHERE article_id = ?
+                """,
+                (source_id, imported_job_id, now, article_id),
+            )
+
+    def list_wechat_articles(
+        self,
+        candidate_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """管理端只返回文章摘要，不公开数据库字段或大段正文。"""
+
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT article_id, candidate_id, account_id, title, account_name,
+                       source_url, summary, published_at, classification,
+                       verification_status, reason, source_id, imported_job_id,
+                       first_seen_at, updated_at
+                FROM wechat_recruitment_articles
+                WHERE candidate_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (candidate_id, max(1, min(limit, 100))),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def save_reputation_scan(self, payload: dict[str, Any]) -> None:
         """原子保存口碑任务和当前证据快照，便于前端轮询及服务重启恢复。"""

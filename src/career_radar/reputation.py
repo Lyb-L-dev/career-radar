@@ -311,6 +311,52 @@ class OpenCLIConnector:
             ],
         }
 
+    def search_web(self, query: str, *, limit: int = 8) -> list[dict[str, Any]]:
+        """使用 DuckDuckGo 只读搜索公开网页，供候选企业官网发现使用。
+
+        搜索参数仍由代码固定，企业名称只是一个独立的命令参数；返回值只保留后续
+        官网判定需要的标题、URL、摘要和排名，避免把任意 OpenCLI 能力暴露给 API。
+        """
+
+        clean_query = _safe_text(query, 200)
+        if not clean_query:
+            return []
+        raw = self._call(
+            [
+                "duckduckgo",
+                "search",
+                clean_query,
+                "--limit",
+                str(max(1, min(limit, 10))),
+                "--region",
+                "cn-zh",
+                "--window",
+                "background",
+                "--site-session",
+                "ephemeral",
+            ]
+        )
+        rows = raw.get("items") or raw.get("results") or [] if isinstance(raw, dict) else raw
+        if not isinstance(rows, list):
+            raise OpenCLIError("DuckDuckGo 搜索结果不是列表")
+        results: list[dict[str, Any]] = []
+        for index, item in enumerate(rows):
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            parts = urlsplit(url)
+            if parts.scheme not in {"http", "https"} or not parts.hostname:
+                continue
+            results.append(
+                {
+                    "rank": int(item.get("rank") or index + 1),
+                    "title": _safe_text(item.get("title"), 300),
+                    "url": url,
+                    "snippet": _safe_text(item.get("snippet") or item.get("description"), 800),
+                }
+            )
+        return results
+
     def _detail(self, platform: str, item: dict[str, Any]) -> object | None:
         if platform == "xiaohongshu" and item.get("url"):
             return self._call([platform, "note", str(item["url"])])

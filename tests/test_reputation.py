@@ -96,6 +96,40 @@ def test_opencli_treats_not_found_as_empty_result(tmp_path: Path) -> None:
     assert connector.search("weibo", "非常具体且没有结果的查询") == []
 
 
+def test_opencli_public_web_search_is_bounded_and_structured(tmp_path: Path) -> None:
+    executable = tmp_path / "opencli.exe"
+    executable.write_bytes(b"")
+    calls: list[list[str]] = []
+
+    def runner(arguments: list[str], _timeout: int) -> subprocess.CompletedProcess[str]:
+        calls.append(arguments)
+        return _completed(
+            arguments,
+            stdout=json.dumps(
+                [
+                    {
+                        "rank": 1,
+                        "title": "示例公司官网",
+                        "url": "https://example.com/",
+                        "snippet": "示例公司有限公司官方网站。",
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+        )
+
+    connector = OpenCLIConnector(
+        ReputationConfig(opencli_command=str(executable)),
+        runner=runner,
+    )
+    results = connector.search_web("示例公司有限公司 官网", limit=99)
+
+    assert results[0]["url"] == "https://example.com/"
+    assert calls[0][1:3] == ["duckduckgo", "search"]
+    assert calls[0][calls[0].index("--limit") + 1] == "10"
+    assert calls[0][-2:] == ["-f", "json"]
+
+
 def test_opencli_does_not_expose_untrusted_source_domain(tmp_path: Path) -> None:
     executable = tmp_path / "opencli.exe"
     executable.write_bytes(b"")

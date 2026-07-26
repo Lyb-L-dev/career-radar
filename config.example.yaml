@@ -45,6 +45,19 @@ llm:
   # 使用不支持 DeepSeek thinking 扩展参数的兼容代理时改为 false。
   disable_thinking: true
 
+# 申请材料只写入本机 private/，该目录已被 Git 忽略。
+application:
+  enabled: true
+  profile_path: private/application_profile.yaml
+  output_dir: private/application_outputs
+  # 预留给后续自定义版式；当前使用内置 A4 ATS 友好样式。
+  resume_template_path: private/master_resume.docx
+  default_resume_pages: 1
+  cover_letter_mode: auto
+  # auto: 有 LibreOffice 就同时导出 PDF；always: 缺少转换器即失败；never: 只生成 DOCX。
+  pdf_mode: auto
+  libreoffice_command: soffice
+
 # 没有安装 Agent Reach/OpenCLI 时保持关闭；企业官网监控不受影响。
 reputation:
   enabled: false
@@ -55,6 +68,15 @@ reputation:
   command_timeout_seconds: 90
   max_evidence_items: 40
   max_evidence_chars: 4000
+
+wechat_recruitment:
+  enabled: true
+  opencli_command: ${USERPROFILE}\.agent-reach\node-global\opencli.cmd
+  results_per_query: 10
+  max_articles_per_scan: 20
+  command_timeout_seconds: 90
+  max_article_chars: 100000
+  search_terms: [招聘, 校招, 实习, 社会招聘]
 
 # 只填写求职判断所需的非敏感信息，不要提交姓名、电话、学号或精确住址。
 candidate:
@@ -104,7 +126,11 @@ companies:
     city: 厦门
     priority: high
     monitor_mode: jobs
-    enabled: false
-    discover_from_homepage: false
-    max_pages: 20
-    notes: 请替换为企业官方招聘页；示例默认禁用，避免误访问。
+      enabled: false
+      discover_from_homepage: false
+      max_pages: 20
+      recruitment_channel: official_careers
+      # 集团统一招聘时改为 group_recruitment，并同时填写：
+      # parent_company: 示例集团
+      # attribution_keywords: [示例公司, 示例品牌]
+      notes: 请替换为企业官方招聘页；示例默认禁用，避免误访问。

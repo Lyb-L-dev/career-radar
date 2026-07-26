@@ -11,7 +11,8 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .pipeline import MonitorService
+from .llm import create_provider
+from .pipeline import MonitoringCancelled, MonitorService
 from .web_repository import WebRepository, company_id
 
 LOGGER = logging.getLogger(__name__)
@@ -53,14 +54,17 @@ class RunManager:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="career-radar-run")
         self._lock = threading.Lock()
         self._active_run_id: str | None = None
+        self._active_payload: dict[str, Any] | None = None
+        self._cancel_event: threading.Event | None = None
         self._recover_orphaned_runs()
 
     def _recover_orphaned_runs(self) -> None:
         """API 进程重启后，旧进程遗留的 running 记录不能继续显示为正在运行。"""
 
         for payload in self.repository.list_runs():
-            if payload.get("status") in {"pending", "running"}:
+            if payload.get("status") in {"pending", "running", "stopping"}:
                 payload["status"] = "interrupted"
+                payload["canStop"] = False
                 payload["finishedAt"] = datetime.now(
                     ZoneInfo(self.repository.settings.app.timezone)
                 ).isoformat(timespec="seconds")
@@ -115,6 +119,10 @@ class RunManager:
             if not selected_names:
                 raise ValueError("没有符合本次扫描范围的启用公司")
 
+            # 在写入运行记录和启动后台线程前验证本进程是否真正读取到 API Key。
+            # 这样缺少 Key/SDK 时前端会立即得到明确错误，而不是生成一个随后全盘失败的任务。
+            create_provider(settings.llm)
+
             now = datetime.now(ZoneInfo(settings.app.timezone))
             run_id = f"run-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
             payload: dict[str, Any] = {
@@ -133,7 +141,7 @@ class RunManager:
                 "updatedJobs": 0,
                 "emailStatus": "not_sent" if send_email else "disabled",
                 "sendEmail": send_email,
-                "canStop": False,
+                "canStop": True,
                 "companies": [
                     {
                         "companyId": company_id(name),
@@ -159,8 +167,17 @@ class RunManager:
                 ],
             }
             self.repository.save_run(payload)
+            cancel_event = threading.Event()
             self._active_run_id = run_id
-            self._executor.submit(self._execute, payload, set(selected_names), send_email)
+            self._active_payload = payload
+            self._cancel_event = cancel_event
+            self._executor.submit(
+                self._execute,
+                payload,
+                set(selected_names),
+                send_email,
+                cancel_event,
+            )
             return payload
 
     def _execute(
@@ -168,11 +185,18 @@ class RunManager:
         payload: dict[str, Any],
         company_names: set[str],
         send_email: bool,
+        cancel_event: threading.Event,
     ) -> None:
         started = time.perf_counter()
         timezone = ZoneInfo(self.repository.settings.app.timezone)
-        payload["status"] = "running"
-        self.repository.save_run(payload)
+        with self._lock:
+            if cancel_event.is_set():
+                payload["status"] = "stopping"
+                payload["canStop"] = False
+            else:
+                payload["status"] = "running"
+                payload["canStop"] = True
+            self.repository.save_run(payload)
 
         def now() -> str:
             return datetime.now(timezone).isoformat(timespec="seconds")
@@ -286,32 +310,72 @@ class RunManager:
                 on_company_start=company_started,
                 on_page_progress=page_progress,
                 on_company_complete=company_completed,
+                should_cancel=cancel_event.is_set,
             )
             finished = datetime.now(timezone)
             failed_count = sum(
                 company["status"] == "failed" for company in payload["companies"]
             )
+            with self._lock:
+                if cancel_event.is_set():
+                    raise MonitoringCancelled("用户请求停止扫描")
+                payload.update(
+                    {
+                        "status": "partial" if failed_count else "completed",
+                        "finishedAt": finished.isoformat(timespec="seconds"),
+                        "durationMs": int((time.perf_counter() - started) * 1000),
+                        "finishedCompanies": result.companies_processed,
+                        "successCount": max(0, result.companies_processed - failed_count),
+                        "failedCount": failed_count,
+                        "newJobs": result.new_jobs,
+                        "updatedJobs": result.updated_jobs,
+                        "emailStatus": "sent" if result.email_sent else ("not_sent" if send_email else "disabled"),
+                        "canStop": False,
+                    }
+                )
+                payload["logs"].append(
+                    {
+                        "time": payload["finishedAt"],
+                        "level": "WARN" if failed_count else "INFO",
+                        "message": (
+                            f"扫描完成：新增 {result.new_jobs}，更新 {result.updated_jobs}，"
+                            f"错误 {len(result.errors)}。"
+                        ),
+                    }
+                )
+        except MonitoringCancelled:
+            finished = datetime.now(timezone).isoformat(timespec="seconds")
+            incomplete = [
+                company
+                for company in payload["companies"]
+                if company["status"] in {"waiting", "running"}
+            ]
+            for company in incomplete:
+                company.update(
+                    {
+                        "status": "skipped",
+                        "skipReason": "user_stop",
+                        "finishedAt": finished,
+                        "currentPage": None,
+                        "steps": _steps("skipped", "用户停止，本轮不再继续"),
+                    }
+                )
             payload.update(
                 {
-                    "status": "partial" if failed_count else "completed",
-                    "finishedAt": finished.isoformat(timespec="seconds"),
+                    "status": "interrupted",
+                    "finishedAt": finished,
                     "durationMs": int((time.perf_counter() - started) * 1000),
-                    "finishedCompanies": result.companies_processed,
-                    "successCount": max(0, result.companies_processed - failed_count),
-                    "failedCount": failed_count,
-                    "newJobs": result.new_jobs,
-                    "updatedJobs": result.updated_jobs,
-                    "emailStatus": "sent" if result.email_sent else ("not_sent" if send_email else "disabled"),
+                    "finishedCompanies": payload["totalCompanies"],
+                    "skippedCount": len(incomplete),
+                    "emailStatus": "not_sent" if send_email else "disabled",
+                    "canStop": False,
                 }
             )
             payload["logs"].append(
                 {
-                    "time": payload["finishedAt"],
-                    "level": "WARN" if failed_count else "INFO",
-                    "message": (
-                        f"扫描完成：新增 {result.new_jobs}，更新 {result.updated_jobs}，"
-                        f"错误 {len(result.errors)}。"
-                    ),
+                    "time": finished,
+                    "level": "WARN",
+                    "message": "扫描已在安全点停止；已完成企业的入库结果已保留。",
                 }
             )
         except Exception as exc:
@@ -322,6 +386,7 @@ class RunManager:
                     "finishedAt": finished,
                     "durationMs": int((time.perf_counter() - started) * 1000),
                     "failedCount": len(company_names),
+                    "canStop": False,
                 }
             )
             payload["logs"].append(
@@ -333,13 +398,35 @@ class RunManager:
             )
             LOGGER.exception("Web 扫描任务失败：%s", payload["id"])
         finally:
-            self.repository.save_run(payload)
             with self._lock:
-                self._active_run_id = None
+                payload["canStop"] = False
+                self.repository.save_run(payload)
+                if self._active_run_id == payload["id"]:
+                    self._active_run_id = None
+                    self._active_payload = None
+                    self._cancel_event = None
 
     def stop(self, run_id: str) -> None:
-        """核心抓取器尚无安全取消点，明确拒绝而不是向前端伪报“已停止”。"""
+        """请求任务在当前 HTTP/LLM 调用返回后的最近安全点停止。"""
 
-        if run_id != self._active_run_id:
-            raise ValueError("该任务当前没有运行")
-        raise RunConflictError("当前版本不能安全中断正在进行的 HTTP/LLM 请求，请等待本轮完成")
+        with self._lock:
+            if (
+                run_id != self._active_run_id
+                or self._active_payload is None
+                or self._cancel_event is None
+            ):
+                raise ValueError("该任务当前没有运行")
+            if self._cancel_event.is_set():
+                return
+            self._cancel_event.set()
+            timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+            self._active_payload["status"] = "stopping"
+            self._active_payload["canStop"] = False
+            self._active_payload["logs"].append(
+                {
+                    "time": timestamp,
+                    "level": "WARN",
+                    "message": "已收到停止请求；当前 HTTP/LLM 调用返回后将在最近安全点停止。",
+                }
+            )
+            self.repository.save_run(self._active_payload)

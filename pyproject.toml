@@ -17,6 +17,8 @@ dependencies = [
   "openai>=2.37,<3",
   "playwright>=1.49,<2",
   "pydantic>=2.8,<3",
+  "pypdf>=5,<7",
+  "python-docx>=1.1,<2",
   "python-dotenv>=1.0,<2",
   "PyYAML>=6.0,<7",
   "requests>=2.32,<3",
@@ -37,6 +39,9 @@ career-radar = "career_radar.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+career_radar = ["application/prompts/*.md"]
 
 [tool.pytest.ini_options]
 addopts = "-q -p no:cacheprovider"

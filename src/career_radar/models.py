@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .application.models import ApplicationConfig
+
 
 class MatchLevel(str, Enum):
     """岗位与 2026 届应届生画像的匹配等级。"""
@@ -78,6 +80,15 @@ class MonitorMode(str, Enum):
     BOTH = "both"
 
 
+class RecruitmentChannel(str, Enum):
+    """正式监控企业当前使用的公开招聘来源。"""
+
+    OFFICIAL_CAREERS = "official_careers"
+    OFFICIAL_HOMEPAGE = "official_homepage"
+    GROUP_RECRUITMENT = "group_recruitment"
+    OFFICIAL_NOTICE_SOURCE = "official_notice_source"
+
+
 class CompanyPriority(str, Enum):
     """公司池推荐优先级；福建本地且有官方荣誉依据的公司可设为高。"""
 
@@ -133,7 +144,21 @@ class CompanyConfig(BaseModel):
     enabled: bool = True
     discover_from_homepage: bool | Literal["auto"] = "auto"
     max_pages: int | None = Field(default=None, ge=1, le=5000)
+    recruitment_channel: RecruitmentChannel = RecruitmentChannel.OFFICIAL_CAREERS
+    parent_company: str | None = None
+    attribution_keywords: list[str] = Field(default_factory=list, max_length=20)
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def group_recruitment_requires_attribution(self) -> CompanyConfig:
+        """集团平台必须有子公司归属词，避免把集团岗位错误归给当前企业。"""
+
+        if self.recruitment_channel == RecruitmentChannel.GROUP_RECRUITMENT:
+            if not self.parent_company or not self.parent_company.strip():
+                raise ValueError("集团招聘平台必须填写 parent_company")
+            if not any(item.strip() for item in self.attribution_keywords):
+                raise ValueError("集团招聘平台必须填写 attribution_keywords")
+        return self
 
 
 class AppConfig(BaseModel):
@@ -308,6 +333,35 @@ class ReputationConfig(BaseModel):
         return values
 
 
+class WechatRecruitmentConfig(BaseModel):
+    """微信公众号招聘搜索；只调用 OpenCLI 的只读 search/download 命令。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    opencli_command: str = "opencli"
+    results_per_query: int = Field(default=10, ge=1, le=10)
+    max_articles_per_scan: int = Field(default=20, ge=1, le=100)
+    command_timeout_seconds: int = Field(default=90, ge=15, le=300)
+    max_article_chars: int = Field(default=100_000, ge=2_000, le=500_000)
+    search_terms: list[str] = Field(
+        default_factory=lambda: ["招聘", "校招", "实习", "社会招聘"],
+        min_length=1,
+        max_length=10,
+    )
+
+    @field_validator("search_terms")
+    @classmethod
+    def search_terms_must_be_unique_and_nonempty(
+        cls,
+        values: list[str],
+    ) -> list[str]:
+        cleaned = [value.strip() for value in values if value.strip()]
+        if not cleaned:
+            raise ValueError("wechat_recruitment.search_terms 不能为空")
+        return list(dict.fromkeys(cleaned))
+
+
 class Settings(BaseModel):
     """完整配置文件的根模型。"""
 
@@ -318,6 +372,10 @@ class Settings(BaseModel):
     llm: LLMConfig
     smtp: SMTPConfig = Field(default_factory=SMTPConfig)
     reputation: ReputationConfig = Field(default_factory=ReputationConfig)
+    wechat_recruitment: WechatRecruitmentConfig = Field(
+        default_factory=WechatRecruitmentConfig
+    )
+    application: ApplicationConfig = Field(default_factory=ApplicationConfig)
     candidate: CandidateProfile = Field(default_factory=CandidateProfile)
     companies: list[CompanyConfig] = Field(min_length=1)
 

@@ -1,0 +1,63 @@
+# 复制到 private/application_profile.yaml 后填写。private/ 已被 Git 忽略。
+schema_version: 1
+verification_status: needs_review
+
+contact:
+  name: 你的姓名
+  phone: "13800000000"
+  email: you@example.com
+  location: 你的城市
+  github: null
+  linkedin: null
+
+education:
+  - institution: 你的学校
+    degree: 本科
+    major: 你的专业
+    start_date: "2022.09"
+    end_date: "2026.06"
+    gpa: null
+    courses: []
+    source_ids: [user-confirmed]
+
+experiences: []
+
+projects:
+  - name: 项目名称
+    start_date: null
+    end_date: null
+    description: 只填写能够在面试中解释和证明的真实内容。
+    responsibilities: []
+    technologies: []
+    links: []
+    source_ids: [user-confirmed]
+
+skills:
+  - name: Python
+    level: 了解
+    evidence: [请填写课程、项目或实习证据]
+    source_ids: [user-confirmed]
+
+awards: []
+leadership: []
+
+preferences:
+  target_roles: [Python后端]
+  preferred_locations: [福州, 厦门]
+  accepted_work_types: [校招, 实习]
+  accept_relocation: true
+  cover_letter_mode: auto
+  resume_page_target: 1
+  constraints: []
+  excluded_directions: []
+
+sources:
+  - id: user-confirmed
+    kind: user_confirmed
+    path: null
+    imported_at: "2026-07-22T00:00:00+08:00"
+    visually_verified: true
+    note: 由用户人工填写并确认。
+
+review_notes:
+  - 确认全部事实后，把 verification_status 改为 confirmed。

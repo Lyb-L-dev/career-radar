@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
@@ -38,6 +39,16 @@ LOGGER = logging.getLogger(__name__)
 PageProgressCallback = Callable[[str, dict[str, Any]], None]
 CompanyStartCallback = Callable[[CompanyConfig], None]
 CompanyCompleteCallback = Callable[[CompanyRunResult, list[StoredJobEvent]], None]
+CancellationCheck = Callable[[], bool]
+
+
+class MonitoringCancelled(RuntimeError):
+    """调用方在流水线安全边界请求协作停止。"""
+
+
+def _raise_if_cancelled(should_cancel: CancellationCheck | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise MonitoringCancelled("用户请求停止扫描")
 
 
 def _safe_callback(callback: Callable[..., None] | None, *args: object) -> None:
@@ -70,6 +81,42 @@ def _homepage_discovery_enabled(company: CompanyConfig) -> bool:
     return path in {"", "/index", "/index.html", "/home"}
 
 
+def _page_matches_company_scope(company: CompanyConfig, page_text: str) -> bool:
+    """集团招聘页只有明确出现子公司归属词时才能产出该公司的岗位。"""
+
+    if company.recruitment_channel.value != "group_recruitment":
+        return True
+    normalized_text = re.sub(r"\s+", "", page_text).casefold()
+    return any(
+        re.sub(r"\s+", "", keyword).casefold() in normalized_text
+        for keyword in company.attribution_keywords
+        if keyword.strip()
+    )
+
+
+def _job_matches_company_scope(company: CompanyConfig, job: JobPosting) -> bool:
+    """集团平台中的每条记录也必须保留子公司归属，不能只靠页面导航命中。"""
+
+    if company.recruitment_channel.value != "group_recruitment":
+        return True
+    job_text = "\n".join(
+        value
+        for value in (
+            job.title,
+            job.description,
+            job.requirements,
+            job.application_method,
+        )
+        if value
+    )
+    normalized_text = re.sub(r"\s+", "", job_text).casefold()
+    return any(
+        re.sub(r"\s+", "", keyword).casefold() in normalized_text
+        for keyword in company.attribution_keywords
+        if keyword.strip()
+    )
+
+
 class CompanyMonitor:
     """对一家公司的公开页面执行有边界的广度优先遍历。"""
 
@@ -82,6 +129,7 @@ class CompanyMonitor:
         self,
         company: CompanyConfig,
         on_page_progress: PageProgressCallback | None = None,
+        should_cancel: CancellationCheck | None = None,
     ) -> CompanyRunResult:
         start_url = canonicalize_crawl_url(company.url)
         queue: deque[str] = deque([start_url])
@@ -98,6 +146,7 @@ class CompanyMonitor:
         # 未配置时继续使用全局值，保持旧配置行为不变。
         page_limit = company.max_pages or self.settings.crawler.max_pages_per_company
         while queue and attempts < page_limit:
+            _raise_if_cancelled(should_cancel)
             requested_url = queue.popleft()
             attempts += 1
             _safe_callback(
@@ -113,6 +162,7 @@ class CompanyMonitor:
             )
             try:
                 page = self.fetcher.fetch(requested_url)
+                _raise_if_cancelled(should_cancel)
                 final_url = canonicalize_url(page.final_url)
                 final_host = urlsplit(final_url).hostname or ""
                 if final_host:
@@ -126,6 +176,7 @@ class CompanyMonitor:
                     page.html,
                     normalize_request_url(page.final_url),
                 )
+                _raise_if_cancelled(should_cancel)
                 analysis = self.analyzer.analyze_page(
                     company.name,
                     final_url,
@@ -133,6 +184,7 @@ class CompanyMonitor:
                     self.settings.crawler.max_links_in_prompt,
                     monitor_mode=company.monitor_mode.value,
                 )
+                _raise_if_cancelled(should_cancel)
                 LOGGER.info(
                     "公司=%s 页面=%s 类型=%s 岗位=%s 渲染=%s",
                     company.name,
@@ -141,8 +193,28 @@ class CompanyMonitor:
                     len(analysis.jobs),
                     page.rendered,
                 )
-                for job in analysis.jobs:
-                    _add_or_merge(jobs, job)
+                page_in_scope = _page_matches_company_scope(company, document.text)
+                if analysis.jobs and not page_in_scope:
+                    LOGGER.info(
+                        "集团招聘页面未命中 %s 的归属词，忽略本页 %s 条记录：%s",
+                        company.name,
+                        len(analysis.jobs),
+                        final_url,
+                    )
+                accepted_jobs = [
+                    job
+                    for job in analysis.jobs
+                    if page_in_scope and _job_matches_company_scope(company, job)
+                ]
+                if page_in_scope and len(accepted_jobs) != len(analysis.jobs):
+                    LOGGER.info(
+                        "集团招聘页有 %s 条记录未在岗位正文命中 %s 归属词，已忽略",
+                        len(analysis.jobs) - len(accepted_jobs),
+                        company.name,
+                    )
+                if page_in_scope:
+                    for job in accepted_jobs:
+                        _add_or_merge(jobs, job)
 
                 fetched_at = datetime.now(
                     ZoneInfo(self.settings.app.timezone)
@@ -162,7 +234,7 @@ class CompanyMonitor:
                         "httpStatus": page.status_code,
                         "contentLength": len(document.text),
                         "llmExtracted": True,
-                        "jobsFound": len(analysis.jobs),
+                        "jobsFound": len(accepted_jobs),
                         "status": "success",
                         "fetchedAt": fetched_at,
                     },
@@ -259,6 +331,8 @@ class CompanyMonitor:
                     if canonical not in visited and canonical not in queued:
                         queue.append(canonical)
                         queued.add(canonical)
+            except MonitoringCancelled:
+                raise
             except Exception as exc:
                 message = f"{company.name}｜{requested_url}｜{type(exc).__name__}: {exc}"
                 LOGGER.error(message)
@@ -319,6 +393,7 @@ class MonitorService:
         on_company_start: CompanyStartCallback | None = None,
         on_page_progress: PageProgressCallback | None = None,
         on_company_complete: CompanyCompleteCallback | None = None,
+        should_cancel: CancellationCheck | None = None,
     ) -> RunResult:
         timezone = ZoneInfo(self.settings.app.timezone)
         started = datetime.now(timezone)
@@ -330,6 +405,7 @@ class MonitorService:
         if not selected:
             raise ValueError("没有启用且符合筛选条件的公司，请检查 companies[].enabled/--company")
 
+        _raise_if_cancelled(should_cancel)
         provider = create_provider(self.settings.llm)
         analyzer = PageAnalyzer(self.settings.llm, provider, self.settings.candidate)
         company_results: list[CompanyRunResult] = []
@@ -341,10 +417,17 @@ class MonitorService:
         with PageFetcher(self.settings.crawler) as fetcher:
             monitor = CompanyMonitor(self.settings, fetcher, analyzer)
             for company in selected:
+                _raise_if_cancelled(should_cancel)
                 LOGGER.info("开始监控公司：%s (%s)", company.name, company.url)
                 _safe_callback(on_company_start, company)
                 try:
-                    company_result = monitor.crawl(company, on_page_progress)
+                    company_result = monitor.crawl(
+                        company,
+                        on_page_progress,
+                        should_cancel,
+                    )
+                except MonitoringCancelled:
+                    raise
                 except Exception as exc:
                     # 公司级兜底保证一家站点的未知异常不会中止其他公司。
                     message = f"{company.name}｜公司级异常｜{type(exc).__name__}: {exc}"
@@ -379,6 +462,7 @@ class MonitorService:
                 company_results.append(company_result)
                 events.extend(company_events)
                 _safe_callback(on_company_complete, company_result, company_events)
+                _raise_if_cancelled(should_cancel)
 
         all_jobs = [job for result in company_results for job in result.jobs]
         errors = [error for result in company_results for error in result.errors]
@@ -393,6 +477,7 @@ class MonitorService:
         csv_path: Path | None = None
         email_sent = False
         if not dry_run:
+            _raise_if_cancelled(should_cancel)
             writer = ReportWriter(self.settings.app.output_dir)
             report_path, csv_path = writer.write_daily(
                 output_events,
@@ -400,6 +485,7 @@ class MonitorService:
                 datetime.now(timezone),
                 write_empty=self.settings.app.write_empty_report,
             )
+            _raise_if_cancelled(should_cancel)
             notify_levels = set(self.settings.app.notify_match_levels)
             notify_profile_levels = set(self.settings.app.notify_profile_fit_levels)
             email_events = [
@@ -410,6 +496,7 @@ class MonitorService:
                 and event.job.difficulty_score <= self.settings.app.notify_max_difficulty_score
             ]
             if self.settings.smtp.enabled and not disable_email and email_events:
+                _raise_if_cancelled(should_cancel)
                 try:
                     send_job_email(
                         self.settings.smtp,

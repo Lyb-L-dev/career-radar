@@ -59,6 +59,37 @@ def _parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("check-config", parents=[common], help="只校验配置，不访问网络")
     subparsers.add_parser("init-db", parents=[common], help="初始化 SQLite 数据库")
+
+    profile = subparsers.add_parser(
+        "check-application-profile",
+        parents=[common],
+        help="校验本机私有申请画像，只输出不含联系方式的摘要",
+    )
+    profile.add_argument("--profile", type=Path, help="覆盖 application.profile_path")
+
+    apply = subparsers.add_parser(
+        "apply",
+        parents=[common],
+        help="评估岗位并在人工批准后生成、双审和修订申请材料正文",
+    )
+    action = apply.add_mutually_exclusive_group(required=True)
+    action.add_argument("--job-id", help="从 SQLite 真实岗位创建任务并执行 DeepSeek 评估")
+    action.add_argument("--evaluate", metavar="APPLICATION_ID", help="评估已有 created 任务")
+    action.add_argument(
+        "--approve",
+        metavar="APPLICATION_ID",
+        help="批准生成材料，执行双审修订并渲染本地文档",
+    )
+    action.add_argument("--render", metavar="APPLICATION_ID", help="渲染已有终稿为 DOCX/PDF")
+    action.add_argument("--status", metavar="APPLICATION_ID", help="查看申请任务状态")
+    action.add_argument("--resume", metavar="APPLICATION_ID", help="从保存的失败步骤恢复")
+    action.add_argument("--reject", metavar="APPLICATION_ID", help="放弃尚未开始生成的任务")
+    apply.add_argument("--profile", type=Path, help="覆盖 application.profile_path")
+    apply.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="仅与 --job-id 配合：冻结任务但暂不调用 DeepSeek",
+    )
     return parser
 
 
@@ -76,6 +107,112 @@ def main(argv: list[str] | None = None) -> int:
             JobStorage(settings.app.database_path).initialize()
             print(f"数据库已初始化：{settings.app.database_path}")
             return 0
+        if args.command == "check-application-profile":
+            from .application.profile import load_application_profile, profile_summary
+
+            profile_path = args.profile or settings.application.profile_path
+            profile = load_application_profile(profile_path)
+            print(json.dumps(profile_summary(profile), ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "apply":
+            from .application.content import ApplicationContentGenerator
+            from .application.document_renderer import ApplicationDocumentRenderer
+            from .application.document_verifier import ApplicationDocumentVerifier
+            from .application.document_workflow import ApplicationDocumentWorkflow
+            from .application.evaluator import JobApplicationEvaluator
+            from .application.llm import DeepSeekApplicationGateway
+            from .application.repository import ApplicationRepository
+            from .application.service import ApplicationService
+            from .application.workflow import ApplicationWorkflow
+
+            application_config = settings.application
+            if args.profile:
+                application_config = application_config.model_copy(
+                    update={"profile_path": args.profile.expanduser().resolve()}
+                )
+            repository = ApplicationRepository(settings.app.database_path)
+            repository.initialize()
+            service = ApplicationService(repository, application_config, settings.app.timezone)
+            workflow = None
+            document_workflow = None
+
+            def get_workflow() -> ApplicationWorkflow:
+                nonlocal workflow
+                if workflow is None:
+                    gateway = DeepSeekApplicationGateway(settings.llm)
+                    workflow = ApplicationWorkflow(
+                        repository,
+                        JobApplicationEvaluator(gateway),
+                        ApplicationContentGenerator(gateway),
+                        settings.app.timezone,
+                    )
+                return workflow
+
+            def get_document_workflow() -> ApplicationDocumentWorkflow:
+                nonlocal document_workflow
+                if document_workflow is None:
+                    document_workflow = ApplicationDocumentWorkflow(
+                        repository,
+                        ApplicationDocumentRenderer(application_config),
+                        ApplicationDocumentVerifier(application_config),
+                        settings.app.timezone,
+                    )
+                return document_workflow
+
+            if args.prepare_only and not args.job_id:
+                raise ValueError("--prepare-only 只能与 --job-id 一起使用")
+            if args.job_id:
+                application_run = service.create(args.job_id)
+                if not args.prepare_only:
+                    application_run = get_workflow().evaluate(application_run.id)
+            elif args.evaluate:
+                application_run = get_workflow().evaluate(args.evaluate)
+            elif args.approve:
+                application_run = get_workflow().approve_and_generate(args.approve)
+                if application_run.status.value == "rendering":
+                    application_run = get_document_workflow().run(application_run.id)
+            elif args.render:
+                application_run = get_document_workflow().run(args.render)
+            elif args.status:
+                application_run = service.get(args.status)
+            elif args.resume:
+                current = service.get(args.resume)
+                if current.status.value == "waiting_for_approval":
+                    application_run = current
+                elif current.status.value in {"rendering", "verifying"} or (
+                    current.status.value == "failed"
+                    and current.failed_step is not None
+                    and current.failed_step.value in {"rendering", "verifying"}
+                ):
+                    application_run = get_document_workflow().resume(args.resume)
+                else:
+                    application_run = get_workflow().resume(args.resume)
+                    if application_run.status.value == "rendering":
+                        application_run = get_document_workflow().run(application_run.id)
+            else:
+                application_run = service.reject(args.reject)
+            public_payload = service.public_json(application_run)
+            evaluation = repository.get_evaluation(application_run.id)
+            if evaluation is not None:
+                public_payload["evaluation"] = evaluation.model_dump(mode="json")
+            artifacts = repository.list_artifacts(application_run.id)
+            if artifacts:
+                public_payload["artifacts"] = [
+                    {
+                        "kind": artifact.kind,
+                        "fileName": Path(artifact.path).name,
+                        "sha256": artifact.sha256,
+                    }
+                    for artifact in artifacts
+                ]
+            print(
+                json.dumps(
+                    public_payload,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2 if application_run.status.value == "failed" else 0
         if args.command == "serve":
             if args.host not in {"127.0.0.1", "localhost", "::1"}:
                 raise ValueError("Web 管理端默认只允许监听本机地址；如需远程访问请先配置认证和 HTTPS")
