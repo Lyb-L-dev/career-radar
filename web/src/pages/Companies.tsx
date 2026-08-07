@@ -449,6 +449,7 @@ export default function CompaniesPage() {
                       {COMPANY_TYPE_LABEL[c.companyType]}
                     </Pill>
                     {c.priority === 'high' && <Pill tone="green">优先关注</Pill>}
+                    {c.atsSource && <Pill tone="amber">ATS 接口</Pill>}
                   </div>
                   <p className="mt-0.5 truncate text-[12px] text-ink-tertiary">{c.website} · {c.industry} · {[c.province, c.city].filter(Boolean).join(' ') || '地区未设置'}</p>
                 </div>
@@ -470,7 +471,11 @@ export default function CompaniesPage() {
                 </div>
                 <div>
                   <dt className="text-ink-tertiary text-[12px]">监控内容</dt>
-                  <dd className="text-ink-body">{MONITOR_MODE_LABEL[c.monitorMode ?? 'jobs']}</dd>
+                  <dd className="text-ink-body">
+                    {c.atsSource
+                      ? `ATS（${{ greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', json_feed: 'JSON Feed' }[c.atsSource]}）`
+                      : MONITOR_MODE_LABEL[c.monitorMode ?? 'jobs']}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-ink-tertiary text-[12px]">渲染方式</dt>

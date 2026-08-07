@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
-import { Radar, ArrowLeft, ArrowRight, Check, Plus, Building2, Loader2, PlugZap } from 'lucide-react'
+import { Radar, ArrowLeft, ArrowRight, Check, FileUp, Building2, Loader2, PlugZap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -25,10 +25,25 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Card, CardTitle } from '@/components/common/PageHeader'
 import { Pill } from '@/components/common/Badges'
 import { useCompanies } from '@/hooks/useCompanies'
-import { addCompany, testCompanyConnection, updateCompany } from '@/services/companies'
+import {
+  addCompany,
+  commitCompanyCsv,
+  previewCompanyCsv,
+  testCompanyConnection,
+  updateCompany,
+  type CompanyImportPreview,
+} from '@/services/companies'
 import { createRun } from '@/services/runs'
 import { getProfile, getSettings, saveProfile, saveSettings } from '@/services/settings'
 import { cn } from '@/lib/utils'
@@ -65,7 +80,12 @@ export default function OnboardingPage() {
   const [baselineOpen, setBaselineOpen] = useState(false)
   const [testing, setTesting] = useState(false)
   const [finishing, setFinishing] = useState(false)
-  const { data: configuredCompanies } = useCompanies()
+  const { data: configuredCompanies, refetch: refetchCompanies } = useCompanies()
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importCsvText, setImportCsvText] = useState('')
+  const [importPreview, setImportPreview] = useState<CompanyImportPreview | null>(null)
 
   // 第 1 步
   const [gradYear, setGradYear] = useState('2026 届')
@@ -100,6 +120,43 @@ export default function OnboardingPage() {
   const [minMatch, setMinMatch] = useState('medium')
 
   const recommended = configuredCompanies ?? []
+
+  const previewImportFile = async (file: File) => {
+    setImporting(true)
+    try {
+      const csvText = await file.text()
+      const preview = await previewCompanyCsv(csvText)
+      setImportCsvText(csvText)
+      setImportPreview(preview)
+      setImportOpen(true)
+    } catch (error) {
+      toast.error('CSV 预览失败', {
+        description: error instanceof Error ? error.message : '请检查文件格式。',
+      })
+    } finally {
+      setImporting(false)
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
+
+  const commitImport = async () => {
+    if (!importPreview?.canCommit) return
+    setImporting(true)
+    try {
+      const result = await commitCompanyCsv(importCsvText)
+      await refetchCompanies()
+      setImportOpen(false)
+      toast.success(`已导入 ${result.imported} 家企业`, {
+        description: result.skipped ? `另有 ${result.skipped} 条重复记录已跳过。` : undefined,
+      })
+    } catch (error) {
+      toast.error('企业导入失败', {
+        description: error instanceof Error ? error.message : '配置文件未发生变化。',
+      })
+    } finally {
+      setImporting(false)
+    }
+  }
 
   const finish = async (sendEmail: boolean) => {
     setFinishing(true)
@@ -363,9 +420,25 @@ export default function OnboardingPage() {
                     测试招聘入口
                   </Button>
                 </div>
-                <Button variant="ghost" size="sm" className="h-9 text-ink-secondary" onClick={() => toast.info('批量导入支持 CSV，每行：企业名称,官网地址')}>
-                  <Plus className="size-4" />
-                  批量导入
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (file) void previewImportFile(file)
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 text-ink-secondary"
+                  disabled={importing}
+                  onClick={() => importInputRef.current?.click()}
+                >
+                  {importing ? <Loader2 className="size-4 animate-spin" /> : <FileUp className="size-4" />}
+                  导入企业 CSV
                 </Button>
               </div>
             </Card>
@@ -501,6 +574,61 @@ export default function OnboardingPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-w-2xl rounded-xl">
+          <DialogHeader>
+            <DialogTitle>确认企业 CSV 导入</DialogTitle>
+            <DialogDescription>
+              已完成本地格式校验和去重。支持中英文列名；至少包含“企业名称”和“官网地址/招聘入口”。
+              此预览不会访问任何企业网站。
+            </DialogDescription>
+          </DialogHeader>
+          {importPreview && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-4 gap-2 text-center text-[13px]">
+                <div className="rounded-lg bg-surface-subtle p-2">总计 {importPreview.stats.total}</div>
+                <div className="rounded-lg bg-success/10 p-2 text-success">可导入 {importPreview.stats.valid}</div>
+                <div className="rounded-lg bg-black/[0.04] p-2">重复 {importPreview.stats.duplicate}</div>
+                <div className="rounded-lg bg-danger/10 p-2 text-danger">无效 {importPreview.stats.invalid}</div>
+              </div>
+              <div className="max-h-72 overflow-auto rounded-lg border border-black/[0.06]">
+                {importPreview.rows.map((row) => (
+                  <div key={row.rowNumber} className="flex gap-3 border-b border-black/[0.05] px-3 py-2 text-[13px] last:border-0">
+                    <span className="w-10 shrink-0 text-ink-tertiary">第 {row.rowNumber} 行</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-ink">{row.name}</p>
+                      <p className="truncate text-[12px] text-ink-tertiary">{row.url || '未填写网址'}</p>
+                      {row.errors.map((error) => (
+                        <p key={error} className="text-[12px] text-danger">{error}</p>
+                      ))}
+                    </div>
+                    <Pill tone={row.status === 'valid' ? 'green' : row.status === 'duplicate' ? 'gray' : 'red'}>
+                      {row.status === 'valid' ? '可导入' : row.status === 'duplicate' ? '重复跳过' : '需修正'}
+                    </Pill>
+                  </div>
+                ))}
+              </div>
+              {!importPreview.canCommit && (
+                <p className="text-[13px] text-danger">
+                  请修正无效行并重新选择 CSV；为保证原子性，本次不会写入任何企业。
+                </p>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>取消</Button>
+            <Button
+              className="bg-brand text-white hover:bg-brand-hover"
+              disabled={!importPreview?.canCommit || importing}
+              onClick={() => void commitImport()}
+            >
+              {importing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+              确认写入配置
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

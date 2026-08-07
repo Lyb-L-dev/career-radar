@@ -13,9 +13,17 @@ export function useJobCounts() {
   return useQuery({ queryKey: ['job-counts'], queryFn: jobsApi.getJobCounts })
 }
 
-export function useJob(id: string) {
-  return useQuery({ queryKey: ['job', id], queryFn: () => jobsApi.getJob(id) })
-}
+  export function useJob(id: string) {
+    return useQuery({ queryKey: ['job', id], queryFn: () => jobsApi.getJob(id) })
+  }
+
+  export function useSimilarJobs(id: string) {
+    return useQuery({
+      queryKey: ['job-similar', id],
+      queryFn: () => jobsApi.getSimilarJobs(id),
+      enabled: !!id,
+    })
+  }
 
 function useInvalidateJobs() {
   const qc = useQueryClient()
@@ -47,6 +55,14 @@ export function useMarkNotInterested() {
   const invalidate = useInvalidateJobs()
   return useMutation({
     mutationFn: (ids: string[]) => jobsApi.markNotInterested(ids),
+    onSuccess: invalidate,
+  })
+}
+
+export function useIgnoreJobUpdate() {
+  const invalidate = useInvalidateJobs()
+  return useMutation({
+    mutationFn: (id: string) => jobsApi.ignoreJobUpdate(id),
     onSuccess: invalidate,
   })
 }

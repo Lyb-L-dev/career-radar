@@ -53,6 +53,7 @@ export const settings: AppSettings = {
     defaultRenderMode: 'auto',
     minContentLength: 500,
     maxPagesPerCompany: 120,
+    maxLlmPagesPerRun: 100,
     requestTimeout: 30,
     respectRobots: true,
   },
@@ -68,19 +69,24 @@ export const settings: AppSettings = {
     timeout: 60,
     retries: 2,
   },
-  email: {
-    enabled: false,
-    smtpHost: '',
+    email: {
+      enabled: false,
+      smtpHost: '',
     smtpPort: 465,
     encryption: 'SSL',
     fromAddress: '',
     toAddresses: [],
     sendOnNew: true,
     sendOnUpdate: false,
-    minMatchLevel: 'medium',
-    maxDifficulty: 7,
-  },
-}
+      minMatchLevel: 'medium',
+      maxDifficulty: 7,
+    },
+    apprise: {
+      enabled: false,
+      urlCount: 0,
+      configured: false,
+    },
+  }
 
 export const dashboardStats: DashboardStats = {
   todayNew: 3,

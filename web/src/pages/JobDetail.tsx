@@ -28,8 +28,8 @@ import {
 import { Card, CardTitle } from '@/components/common/PageHeader'
 import { MatchBadge, JobStatusBadge, DifficultyMeter, Pill } from '@/components/common/Badges'
 import { PageSkeleton, ErrorState, EmptyState } from '@/components/common/StateViews'
-import { ReputationCard } from '@/components/jobs/ReputationCard'
-import { useJob, useToggleFavorite, useMarkApplied } from '@/hooks/useJobs'
+  import { ReputationCard } from '@/components/jobs/ReputationCard'
+  import { useJob, useSimilarJobs, useToggleFavorite, useMarkApplied } from '@/hooks/useJobs'
 import { useCreateApplication, useJobApplications } from '@/hooks/useApplications'
 import { APPLICATION_STATUS_LABEL, JOB_TYPE_LABEL } from '@/types'
 import type { JobChange } from '@/types'
@@ -105,6 +105,43 @@ function DiffDialog({ change, open, onOpenChange }: { change: JobChange | null; 
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function SimilarJobsCard({ jobId }: { jobId: string }) {
+  const { data: similar, isLoading } = useSimilarJobs(jobId)
+  if (isLoading || !similar || similar.length === 0) return null
+  return (
+    <Card className="space-y-3">
+      <CardTitle>相似岗位</CardTitle>
+      <p className="text-[12px] text-ink-tertiary">
+        按本地语义向量计算的相似度，适合横向比较同类 JD、发现同一岗位的重复发布。
+      </p>
+      <ul className="space-y-2.5">
+        {similar.map((item) => (
+          <li key={item.id}>
+            <Link
+              to={`/jobs/${item.id}`}
+              className="block rounded-lg bg-surface-subtle px-3.5 py-3 transition-colors hover:bg-brand-soft"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-[14px] font-medium text-ink">{item.title}</p>
+                <Pill
+                  tone={
+                    item.similarity >= 0.6 ? 'green' : item.similarity >= 0.35 ? 'blue' : 'gray'
+                  }
+                >
+                  {Math.round(item.similarity * 100)}%
+                </Pill>
+              </div>
+              <p className="mt-0.5 truncate text-[12px] text-ink-tertiary">
+                {item.companyName} · {item.city}
+              </p>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }
 
@@ -313,6 +350,8 @@ export default function JobDetailPage() {
           </Card>
 
           <ReputationCard jobId={job.id} />
+
+          <SimilarJobsCard jobId={job.id} />
 
           {/* 更新历史 */}
           <Card>

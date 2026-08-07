@@ -33,20 +33,33 @@ export async function saveSettings(input: AppSettings): Promise<{ ok: boolean }>
   return delay({ ok: true }, 300, 500)
 }
 
-export async function testLlmConnection(): Promise<{ ok: boolean; latencyMs: number; model: string }> {
-  if (!USE_MOCK) return apiRequest('/settings/test-llm', { method: 'POST' })
+export async function testLlmConnection(confirmed: boolean): Promise<{ ok: boolean; latencyMs: number; model: string }> {
+  if (!USE_MOCK) {
+    return apiRequest('/settings/test-llm', {
+      method: 'POST',
+      body: JSON.stringify({ confirmed }),
+    })
+  }
   return delay({ ok: true, latencyMs: 860, model: settings.llm.model }, 900, 1500)
 }
 
-export async function sendTestEmail(): Promise<{ ok: boolean; message: string }> {
-  if (!USE_MOCK) return apiRequest('/settings/test-email', { method: 'POST' })
-  if (!settings.email.enabled || !settings.email.smtpHost) {
-    return delay({ ok: false, message: 'SMTP 尚未配置完成，无法发送测试邮件。' }, 500, 800)
+  export async function sendTestEmail(): Promise<{ ok: boolean; message: string }> {
+    if (!USE_MOCK) return apiRequest('/settings/test-email', { method: 'POST' })
+    if (!settings.email.enabled || !settings.email.smtpHost) {
+      return delay({ ok: false, message: 'SMTP 尚未配置完成，无法发送测试邮件。' }, 500, 800)
+    }
+    return delay({ ok: true, message: '测试邮件已发送，请在收件箱查收。' }, 800, 1200)
   }
-  return delay({ ok: true, message: '测试邮件已发送，请在收件箱查收。' }, 800, 1200)
-}
 
-export interface MaintenanceResult {
+  export async function sendTestApprise(): Promise<{ ok: boolean; message: string }> {
+    if (!USE_MOCK) return apiRequest('/settings/test-apprise', { method: 'POST' })
+    if (!settings.apprise.enabled || !settings.apprise.configured) {
+      return delay({ ok: false, message: 'Apprise 尚未配置完成，无法发送测试推送。' }, 500, 800)
+    }
+    return delay({ ok: true, message: '测试推送已发送，请在对应渠道查收。' }, 800, 1200)
+  }
+  
+  export interface MaintenanceResult {
   ok: boolean
   message: string
 }
@@ -66,4 +79,57 @@ export async function runMaintenance(action: 'export' | 'clearLogs' | 'rebuildIn
 export async function getDbStats(): Promise<{ jobs: number; history: number; reports: number; logs: number; sizeMb: number }> {
   if (!USE_MOCK) return apiRequest('/settings/db-stats')
   return delay({ jobs: 15, history: 21, reports: 5, logs: 128, sizeMb: 2.4 })
+}
+
+export interface AutomationStatus {
+  supported: boolean
+  platform: string
+  taskName: string
+  dailyRunTime: string
+  installed: boolean
+  state: string
+  nextRunAt?: string | null
+  lastRunAt?: string | null
+  lastResult?: number | null
+  startWhenAvailable: boolean
+  allowOnBattery: boolean
+  paidCallsRequireConfirmation: boolean
+  message: string
+}
+
+export async function getAutomationStatus(): Promise<AutomationStatus> {
+  if (!USE_MOCK) return apiRequest('/automation')
+  return delay({
+    supported: true,
+    platform: 'Windows',
+    taskName: 'Career Radar Daily Monitor',
+    dailyRunTime: settings.basic.dailyRunTime,
+    installed: false,
+    state: 'not_installed',
+    nextRunAt: null,
+    lastRunAt: null,
+    lastResult: null,
+    startWhenAvailable: true,
+    allowOnBattery: true,
+    paidCallsRequireConfirmation: true,
+    message: '将使用当前项目虚拟环境和 config.yaml，每天运行一次公开招聘监控。',
+  })
+}
+
+export async function changeAutomation(
+  action: 'install' | 'remove',
+  dailyRunTime: string,
+): Promise<AutomationStatus> {
+  if (!USE_MOCK) {
+    return apiRequest(`/automation/${action}`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmed: true, dailyRunTime }),
+    })
+  }
+  const current = await getAutomationStatus()
+  return delay({
+    ...current,
+    installed: action === 'install',
+    state: action === 'install' ? 'Ready' : 'not_installed',
+  })
 }

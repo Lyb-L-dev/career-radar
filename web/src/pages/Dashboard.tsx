@@ -13,6 +13,9 @@ import {
   Clock,
   MinusCircle,
   AlertTriangle,
+  ClipboardCheck,
+  Send,
+  FileCheck2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -32,6 +35,7 @@ import { PageSkeleton, ErrorState } from '@/components/common/StateViews'
 import { useDashboardStats, useRuns } from '@/hooks/useData'
 import { useCompanies } from '@/hooks/useCompanies'
 import { useJobs, useToggleFavorite } from '@/hooks/useJobs'
+import { useApplications } from '@/hooks/useApplications'
 import { createRun } from '@/services/runs'
 import type { Job } from '@/types'
 import { cn } from '@/lib/utils'
@@ -146,6 +150,7 @@ export default function DashboardPage() {
   const { data: allJobs } = useJobs({ tab: 'all' })
   const { data: runs } = useRuns()
   const { data: companies } = useCompanies()
+  const { data: applications } = useApplications()
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [scope, setScope] = useState<'all' | 'failed'>('all')
@@ -186,6 +191,48 @@ export default function DashboardPage() {
         .slice(0, 5),
     [allJobs],
   )
+  const todayTasks = useMemo(() => {
+    const pendingUpdates = (allJobs ?? []).filter((job) => job.status === 'updated').length
+    const savedToApply = (allJobs ?? []).filter(
+      (job) => job.isFavorite && !job.isApplied && !job.notInterested,
+    ).length
+    const waitingApproval = (applications ?? []).filter(
+      (task) => task.status === 'waiting_for_approval',
+    ).length
+    const failedCompanies = (companies ?? []).filter((company) =>
+      ['robots_blocked', 'structure_error', 'request_failed'].includes(company.status),
+    ).length
+    return [
+      {
+        label: '查看岗位变化',
+        value: pendingUpdates,
+        description: '尚未处理的岗位更新',
+        link: '/jobs?tab=updated',
+        icon: ClipboardCheck,
+      },
+      {
+        label: '推进收藏岗位',
+        value: savedToApply,
+        description: '已收藏但还未标记投递',
+        link: '/jobs?tab=favorite',
+        icon: Send,
+      },
+      {
+        label: '审批申请材料',
+        value: waitingApproval,
+        description: '等待你确认后才会继续',
+        link: '/applications',
+        icon: FileCheck2,
+      },
+      {
+        label: '处理监控异常',
+        value: failedCompanies,
+        description: '需要调整来源或监控规则',
+        link: '/companies',
+        icon: AlertTriangle,
+      },
+    ]
+  }, [allJobs, applications, companies])
 
   if (isLoading) return <PageSkeleton />
   if (isError || !stats) return <ErrorState onRetry={() => refetch()} />
@@ -240,6 +287,69 @@ export default function DashboardPage() {
         <StatCard label="高匹配岗位" value={stats.highMatch} delta={stats.highMatchDelta} desc="与你当前画像匹配度高" to="/jobs?tab=recommended" />
         <StatCard label="监控企业" value={stats.monitoredCompanies} desc={`${stats.environment.successCompanies} 家正常 · ${stats.environment.pendingCompanies} 家待验证`} to="/companies" />
       </div>
+
+      <Card>
+        <CardTitle
+          extra={<span className="text-[12px] font-normal text-ink-tertiary">数据均来自本机，不会自动执行外部操作</span>}
+        >
+          今日工作台
+        </CardTitle>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {todayTasks.map((task) => {
+            const Icon = task.icon
+            return (
+              <button
+                key={task.label}
+                onClick={() => navigate(task.link)}
+                className="flex items-center gap-3 rounded-xl border border-black/[0.06] p-4 text-left transition-colors hover:bg-surface-subtle"
+              >
+                <span className={cn(
+                  'flex size-10 shrink-0 items-center justify-center rounded-lg',
+                  task.value ? 'bg-brand-soft text-brand' : 'bg-success/10 text-success',
+                )}>
+                  <Icon className="size-4.5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="flex items-baseline gap-2">
+                    <span className="text-[14px] font-medium text-ink">{task.label}</span>
+                    <span className="text-[18px] font-semibold tabular-nums text-ink">{task.value}</span>
+                  </span>
+                  <span className="block truncate text-[12px] text-ink-tertiary">
+                    {task.value ? task.description : '今天已处理完'}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </Card>
+
+      {!lastRun && (
+        <Card>
+          <CardTitle>开始使用 Career Radar</CardTitle>
+          <div className="grid gap-3 md:grid-cols-3">
+            {[
+              { step: '1', title: '确认求职画像', description: '补充目标岗位、城市与已有技能', link: '/profile' },
+              { step: '2', title: '检查监控企业', description: '确认官网、招聘入口或替代来源', link: '/companies' },
+              { step: '3', title: '建立首次基线', description: '先检查范围，再由你手动开始扫描', link: '/onboarding' },
+            ].map((item) => (
+              <button
+                key={item.step}
+                onClick={() => navigate(item.link)}
+                className="flex gap-3 rounded-xl bg-surface-subtle p-4 text-left hover:bg-black/[0.05]"
+              >
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-brand text-[12px] font-medium text-white">
+                  {item.step}
+                </span>
+                <span>
+                  <span className="block text-[14px] font-medium text-ink">{item.title}</span>
+                  <span className="mt-0.5 block text-[12px] text-ink-tertiary">{item.description}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* AI 推荐岗位 */}
       <div>

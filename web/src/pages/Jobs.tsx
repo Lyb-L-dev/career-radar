@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import {
@@ -41,11 +41,21 @@ import {
 import { PageHeader, Card } from '@/components/common/PageHeader'
 import { MatchBadge, JobStatusBadge, DifficultyMeter, Pill } from '@/components/common/Badges'
 import { ListSkeleton, EmptyState, ErrorState, NoResults } from '@/components/common/StateViews'
-import { useJobs, useJobCounts, useToggleFavorite, useMarkApplied, useMarkNotInterested, useFavoriteMany } from '@/hooks/useJobs'
+import { useJobs, useJobCounts, useToggleFavorite, useMarkApplied, useMarkNotInterested, useFavoriteMany, useIgnoreJobUpdate } from '@/hooks/useJobs'
 import { useCompanies } from '@/hooks/useCompanies'
 import type { CompanyType, IndustryCategory, Job, JobTab, MatchLevel, JobType } from '@/types'
 import { COMPANY_TYPE_LABEL, INDUSTRY_CATEGORY_LABEL, MATCH_LEVEL_LABEL, JOB_TYPE_LABEL } from '@/types'
 import { cn } from '@/lib/utils'
+import {
+  ALL_FILTER_VALUE,
+  hasFilterParams,
+  jobFilterValuesFromParams,
+  jobFilterValuesToParams,
+  loadSavedJobFilters,
+  saveJobFilters,
+  type JobFilterValues,
+} from '@/lib/jobFilters'
+import { downloadJobsCsv } from '@/lib/jobExport'
 
 const TAB_LABELS: { value: JobTab; label: string }[] = [
   { value: 'recommended', label: '推荐' },
@@ -56,22 +66,27 @@ const TAB_LABELS: { value: JobTab; label: string }[] = [
   { value: 'favorite', label: '收藏' },
 ]
 
-const ALL = '__all__'
+const ALL = ALL_FILTER_VALUE
 
 export default function JobsPage() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
-  const tab = (params.get('tab') as JobTab) || 'recommended'
+  const tab = jobFilterValuesFromParams(params).tab
 
-  const [keyword, setKeyword] = useState('')
-  const [companyId, setCompanyId] = useState(ALL)
-  const [companyType, setCompanyType] = useState(ALL)
-  const [industryCategory, setIndustryCategory] = useState(ALL)
-  const [province, setProvince] = useState(ALL)
-  const [city, setCity] = useState(ALL)
-  const [jobType, setJobType] = useState(ALL)
-  const [ability, setAbility] = useState(ALL)
-  const [maxDifficulty, setMaxDifficulty] = useState(ALL)
+  const [initialFilters] = useState<JobFilterValues>(() => {
+    const fromUrl = jobFilterValuesFromParams(params)
+    const saved = hasFilterParams(params) ? null : loadSavedJobFilters()
+    return saved ? { ...saved, tab: fromUrl.tab } : fromUrl
+  })
+  const [keyword, setKeyword] = useState(initialFilters.keyword)
+  const [companyId, setCompanyId] = useState(initialFilters.companyId)
+  const [companyType, setCompanyType] = useState(initialFilters.companyType)
+  const [industryCategory, setIndustryCategory] = useState(initialFilters.industryCategory)
+  const [province, setProvince] = useState(initialFilters.province)
+  const [city, setCity] = useState(initialFilters.city)
+  const [jobType, setJobType] = useState(initialFilters.jobType)
+  const [ability, setAbility] = useState(initialFilters.ability)
+  const [maxDifficulty, setMaxDifficulty] = useState(initialFilters.maxDifficulty)
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const filter = useMemo(
@@ -89,6 +104,26 @@ export default function JobsPage() {
     }),
     [tab, keyword, companyId, companyType, industryCategory, province, city, jobType, ability, maxDifficulty],
   )
+  const filterValues = useMemo<JobFilterValues>(
+    () => ({
+      tab,
+      keyword,
+      companyId,
+      companyType,
+      industryCategory,
+      province,
+      city,
+      jobType,
+      ability,
+      maxDifficulty,
+    }),
+    [tab, keyword, companyId, companyType, industryCategory, province, city, jobType, ability, maxDifficulty],
+  )
+
+  useEffect(() => {
+    const next = jobFilterValuesToParams(filterValues)
+    if (next.toString() !== params.toString()) setParams(next, { replace: true })
+  }, [filterValues, params, setParams])
 
   const { data: jobs, isLoading, isError, refetch, isFetching } = useJobs(filter)
   const { data: counts } = useJobCounts()
@@ -97,6 +132,7 @@ export default function JobsPage() {
   const markApplied = useMarkApplied()
   const markNotInterested = useMarkNotInterested()
   const favoriteMany = useFavoriteMany()
+  const ignoreUpdate = useIgnoreJobUpdate()
 
   const cities = useMemo(() => Array.from(new Set((jobs ?? []).map((j) => j.city))), [jobs])
   const hasActiveFilter = keyword || companyId !== ALL || companyType !== ALL || industryCategory !== ALL || province !== ALL || city !== ALL || jobType !== ALL || ability !== ALL || maxDifficulty !== ALL
@@ -111,6 +147,16 @@ export default function JobsPage() {
     setJobType(ALL)
     setAbility(ALL)
     setMaxDifficulty(ALL)
+  }
+
+  const exportJobs = (items: Job[], scope: string) => {
+    if (items.length === 0) {
+      toast.info('当前没有可导出的岗位')
+      return
+    }
+    const date = new Intl.DateTimeFormat('sv-SE').format(new Date())
+    downloadJobsCsv(items, `career-radar-${scope}-${date}.csv`)
+    toast.success(`已导出 ${items.length} 个岗位`)
   }
 
   const toggleSelect = (id: string, checked: boolean) => {
@@ -134,16 +180,20 @@ export default function JobsPage() {
       <DropdownMenuContent align="end">
         <DropdownMenuItem
           onClick={() => {
-            markApplied.mutate({ id: job.id, applied: !job.isApplied })
-            toast.success(job.isApplied ? '已取消投递标记' : '已标记为已投递')
+            markApplied.mutate(
+              { id: job.id, applied: !job.isApplied },
+              { onSuccess: () => toast.success(job.isApplied ? '已取消投递标记' : '已标记为已投递') },
+            )
           }}
         >
           {job.isApplied ? '取消已投递标记' : '标记已投递'}
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => {
-            markNotInterested.mutate([job.id])
-            toast.success('已标记为不感兴趣，后续推荐将减少类似岗位')
+            markNotInterested.mutate(
+              [job.id],
+              { onSuccess: () => toast.success('已标记为不感兴趣，后续推荐将减少类似岗位') },
+            )
           }}
         >
           标记不感兴趣
@@ -157,7 +207,15 @@ export default function JobsPage() {
           复制岗位信息
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => toast.success('已忽略本次更新')}>忽略本次更新</DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={job.status !== 'updated' || ignoreUpdate.isPending}
+          onClick={() => ignoreUpdate.mutate(
+            job.id,
+            { onSuccess: () => toast.success('已忽略当前版本；岗位再次变化时会重新提醒') },
+          )}
+        >
+          忽略本次更新
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -171,7 +229,7 @@ export default function JobsPage() {
           <>
             <Button
               variant="outline"
-              onClick={() => toast.success('当前筛选结果已导出为 CSV 文件')}
+              onClick={() => exportJobs(jobs ?? [], '筛选结果')}
             >
               <Download className="size-4" />
               导出当前结果
@@ -192,7 +250,13 @@ export default function JobsPage() {
       />
 
       {/* 标签页 */}
-      <Tabs value={tab} onValueChange={(v) => { setParams({ tab: v }); setSelected(new Set()) }}>
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          setParams(jobFilterValuesToParams({ ...filterValues, tab: v as JobTab }))
+          setSelected(new Set())
+        }}
+      >
         <TabsList className="bg-surface shadow-card h-11 rounded-lg p-1">
           {TAB_LABELS.map((t) => (
             <TabsTrigger key={t.value} value={t.value} className="rounded-md px-4 data-[state=active]:bg-brand-soft data-[state=active]:text-brand-foreground data-[state=active]:shadow-none">
@@ -297,7 +361,10 @@ export default function JobsPage() {
             variant="ghost"
             size="sm"
             className="text-brand ml-auto"
-            onClick={() => toast.success('筛选条件已保存，下次进入岗位中心自动应用')}
+            onClick={() => {
+              saveJobFilters(filterValues)
+              toast.success('筛选条件已保存，下次进入岗位中心自动应用')
+            }}
           >
             <Bookmark className="size-3.5" />
             保存筛选条件
@@ -314,15 +381,26 @@ export default function JobsPage() {
               size="sm"
               variant="secondary"
               onClick={() => {
-                favoriteMany.mutate([...selected])
-                toast.success(`已收藏 ${selected.size} 个岗位`)
-                setSelected(new Set())
+                const count = selected.size
+                favoriteMany.mutate([...selected], {
+                  onSuccess: () => {
+                    toast.success(`已收藏 ${count} 个岗位`)
+                    setSelected(new Set())
+                  },
+                })
               }}
             >
               <Star className="size-3.5" />
               批量收藏
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => { toast.success(`已导出 ${selected.size} 个岗位`); setSelected(new Set()) }}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                exportJobs((jobs ?? []).filter((job) => selected.has(job.id)), '已选岗位')
+                setSelected(new Set())
+              }}
+            >
               <Download className="size-3.5" />
               批量导出
             </Button>
@@ -330,9 +408,13 @@ export default function JobsPage() {
               size="sm"
               variant="secondary"
               onClick={() => {
-                markNotInterested.mutate([...selected])
-                toast.success(`已将 ${selected.size} 个岗位标记为不感兴趣`)
-                setSelected(new Set())
+                const count = selected.size
+                markNotInterested.mutate([...selected], {
+                  onSuccess: () => {
+                    toast.success(`已将 ${count} 个岗位标记为不感兴趣`)
+                    setSelected(new Set())
+                  },
+                })
               }}
             >
               <CircleOff className="size-3.5" />
@@ -430,8 +512,10 @@ export default function JobsPage() {
                         className={cn('size-8 text-ink-tertiary', job.isFavorite && 'text-highlight')}
                         aria-label={job.isFavorite ? '取消收藏' : '收藏'}
                         onClick={() => {
-                          toggleFav.mutate(job.id)
-                          toast.success(job.isFavorite ? '已取消收藏' : '岗位已收藏')
+                          toggleFav.mutate(
+                            job.id,
+                            { onSuccess: () => toast.success(job.isFavorite ? '已取消收藏' : '岗位已收藏') },
+                          )
                         }}
                       >
                         <Star className={cn('size-4', job.isFavorite && 'fill-current')} />

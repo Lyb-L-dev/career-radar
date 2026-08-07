@@ -98,6 +98,54 @@ export async function removeCompanies(ids: string[]): Promise<{ ok: boolean; del
   return delay({ ok: true, deleted: deletable }, 200, 400)
 }
 
+export interface CompanyImportPreviewRow {
+  rowNumber: number
+  name: string
+  url: string
+  status: 'valid' | 'duplicate' | 'invalid'
+  errors: string[]
+}
+
+export interface CompanyImportPreview {
+  rows: CompanyImportPreviewRow[]
+  stats: { total: number; valid: number; duplicate: number; invalid: number }
+  canCommit: boolean
+}
+
+export async function previewCompanyCsv(csvText: string): Promise<CompanyImportPreview> {
+  if (!USE_MOCK) {
+    return apiRequest('/companies/import/preview', {
+      method: 'POST',
+      body: JSON.stringify({ csvText }),
+    })
+  }
+  const rows = csvText.trim().split(/\r?\n/).slice(1)
+  return delay({
+    rows: rows.map((line, index) => ({
+      rowNumber: index + 2,
+      name: line.split(',')[0] || '未填写',
+      url: line.split(',')[1] || '',
+      status: 'valid' as const,
+      errors: [],
+    })),
+    stats: { total: rows.length, valid: rows.length, duplicate: 0, invalid: 0 },
+    canCommit: rows.length > 0,
+  })
+}
+
+export async function commitCompanyCsv(
+  csvText: string,
+): Promise<{ ok: boolean; imported: number; skipped: number }> {
+  if (!USE_MOCK) {
+    return apiRequest('/companies/import/commit', {
+      method: 'POST',
+      body: JSON.stringify({ csvText, confirmed: true }),
+    })
+  }
+  const imported = Math.max(0, csvText.trim().split(/\r?\n/).length - 1)
+  return delay({ ok: true, imported, skipped: 0 })
+}
+
 export async function testCompanyConnection(_website: string, _careersUrl?: string): Promise<CompanyTestResult> {
   if (!USE_MOCK) {
     return apiRequest('/companies/test', {

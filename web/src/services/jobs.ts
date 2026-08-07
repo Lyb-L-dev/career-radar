@@ -1,6 +1,6 @@
-import { apiRequest, delay, copy, USE_MOCK } from './config'
-import { jobs } from '@/mocks/jobs'
-import type { Job, JobFilter } from '@/types'
+  import { apiRequest, delay, copy, USE_MOCK } from './config'
+  import { jobs } from '@/mocks/jobs'
+  import type { Job, JobFilter, SimilarJob } from '@/types'
 
 function matchFilter(job: Job, filter: JobFilter): boolean {
   if (filter.tab === 'notice' && job.type !== 'notice') return false
@@ -55,10 +55,25 @@ export async function getJobCounts(): Promise<Record<string, number>> {
   return USE_MOCK ? delay(result) : result
 }
 
-export async function getJob(id: string): Promise<Job | undefined> {
-  if (!USE_MOCK) return apiRequest<Job>(`/jobs/${encodeURIComponent(id)}`)
-  return delay(copy(jobs.find((j) => j.id === id)))
-}
+  export async function getJob(id: string): Promise<Job | undefined> {
+    if (!USE_MOCK) return apiRequest<Job>(`/jobs/${encodeURIComponent(id)}`)
+    return delay(copy(jobs.find((j) => j.id === id)))
+  }
+
+  export async function getSimilarJobs(id: string): Promise<SimilarJob[]> {
+    if (!USE_MOCK) {
+      return apiRequest<SimilarJob[]>(`/jobs/${encodeURIComponent(id)}/similar`)
+    }
+    const source = copy(jobs)
+    const current = source.find((j) => j.id === id)
+    if (!current) return delay([])
+    const scored = source
+      .filter((j) => j.id !== id)
+      .map((j) => ({ ...j, similarity: Math.round((Math.random() * 0.45 + 0.2) * 100) / 100 }))
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 5)
+    return delay(scored)
+  }
 
 export async function toggleFavorite(id: string): Promise<{ isFavorite: boolean }> {
   if (!USE_MOCK) {
@@ -93,6 +108,17 @@ export async function markNotInterested(ids: string[]): Promise<{ ok: boolean }>
     if (ids.includes(j.id)) j.notInterested = true
   })
   return delay({ ok: true }, 100, 300)
+}
+
+export async function ignoreJobUpdate(id: string): Promise<{ ok: boolean }> {
+  if (!USE_MOCK) {
+    return apiRequest(`/jobs/${encodeURIComponent(id)}/ignore-update`, {
+      method: 'POST',
+    })
+  }
+  const job = jobs.find((j) => j.id === id)
+  if (job) job.status = 'ignored'
+  return delay({ ok: true }, 100, 250)
 }
 
 export async function favoriteMany(ids: string[]): Promise<{ ok: boolean }> {

@@ -138,9 +138,11 @@ export interface Job {
   contactEmail?: string
   analysis: JobAnalysis
   difficultyFactors: DifficultyFactor[]
-  source: SourceCredibility
-  history: JobChange[]
-}
+    source: SourceCredibility
+    history: JobChange[]
+  }
+
+  export type SimilarJob = Job & { similarity: number }
 
 // ---------- AI 申请材料 ----------
 export type ApplicationStatus =
@@ -393,6 +395,7 @@ export interface Company {
   city?: string
   priority?: CompanyPriority
   monitorMode?: MonitorMode
+  atsSource?: 'greenhouse' | 'lever' | 'ashby' | 'json_feed'
   governmentHonors?: string[]
   evidenceUrls?: string[]
   status: CompanyStatus
@@ -840,11 +843,12 @@ export interface AppSettings {
     defaultRenderMode: RenderMode
     minContentLength: number
     maxPagesPerCompany: number
+    maxLlmPagesPerRun: number
     requestTimeout: number
     respectRobots: boolean
   }
-  llm: {
-    provider: 'DeepSeek' | 'OpenAI' | 'Anthropic'
+    llm: {
+      provider: 'DeepSeek' | 'OpenAI' | 'Anthropic' | 'LiteLLM'
     model: string
     apiBaseUrl: string
     apiKeyMasked: string
@@ -855,19 +859,24 @@ export interface AppSettings {
     timeout: number
     retries: number
   }
-  email: {
-    enabled: boolean
-    smtpHost: string
-    smtpPort: number
-    encryption: 'SSL' | 'STARTTLS' | 'none'
-    fromAddress: string
-    toAddresses: string[]
-    sendOnNew: boolean
-    sendOnUpdate: boolean
-    minMatchLevel: MatchLevel
-    maxDifficulty: number
+    email: {
+      enabled: boolean
+      smtpHost: string
+      smtpPort: number
+      encryption: 'SSL' | 'STARTTLS' | 'none'
+      fromAddress: string
+      toAddresses: string[]
+      sendOnNew: boolean
+      sendOnUpdate: boolean
+      minMatchLevel: MatchLevel
+      maxDifficulty: number
+    }
+    apprise: {
+      enabled: boolean
+      urlCount: number
+      configured: boolean
+    }
   }
-}
 
 // ---------- 总览 ----------
 export interface AttentionItem {

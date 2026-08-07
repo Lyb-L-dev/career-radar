@@ -13,6 +13,7 @@ import {
   FolderCog,
   ShieldCheck,
   Info,
+  CalendarClock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,7 +32,15 @@ import { Pill } from '@/components/common/Badges'
 import { PageSkeleton, ErrorState } from '@/components/common/StateViews'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useSettings, useSaveSettings } from '@/hooks/useData'
-import { testLlmConnection, sendTestEmail, runMaintenance, getDbStats } from '@/services/settings'
+import {
+  testLlmConnection,
+  sendTestEmail,
+  sendTestApprise,
+  runMaintenance,
+  getDbStats,
+  getAutomationStatus,
+  changeAutomation,
+} from '@/services/settings'
 import type { AppSettings, RenderMode, MatchLevel } from '@/types'
 import { MATCH_LEVEL_LABEL } from '@/types'
 import { useQuery } from '@tanstack/react-query'
@@ -65,17 +74,27 @@ export default function SettingsPage() {
   if (isLoading) return <PageSkeleton />
   if (isError || !settings) return <ErrorState onRetry={() => refetch()} />
 
-  return <SettingsEditor key={JSON.stringify(settings)} settings={settings} initialTab={tabParam === 'email' ? 'email' : 'basic'} />
+  const initialTab = ['basic', 'crawler', 'llm', 'email', 'automation', 'data'].includes(tabParam ?? '')
+    ? tabParam!
+    : 'basic'
+  return <SettingsEditor key={JSON.stringify(settings)} settings={settings} initialTab={initialTab} />
 }
 
 function SettingsEditor({ settings, initialTab }: { settings: AppSettings; initialTab: string }) {
   const saveSettings = useSaveSettings()
   const [draft, setDraft] = useState<AppSettings>(settings)
   const [tab, setTab] = useState(initialTab)
-  const [llmTesting, setLlmTesting] = useState(false)
-  const [emailTesting, setEmailTesting] = useState(false)
+const [llmTesting, setLlmTesting] = useState(false)
+const [llmConfirmOpen, setLlmConfirmOpen] = useState(false)
+const [emailTesting, setEmailTesting] = useState(false)
+const [appriseTesting, setAppriseTesting] = useState(false)
+const [automationAction, setAutomationAction] = useState<null | 'install' | 'remove'>(null)
   const [dangerAction, setDangerAction] = useState<null | { key: 'clearLogs' | 'rebuildIndex' | 'cleanReports'; title: string; desc: string }>(null)
   const { data: dbStats } = useQuery({ queryKey: ['db-stats'], queryFn: getDbStats })
+  const { data: automation, refetch: refetchAutomation } = useQuery({
+    queryKey: ['automation-status'],
+    queryFn: getAutomationStatus,
+  })
 
   const patch = (fn: (s: AppSettings) => AppSettings) => setDraft(fn(draft))
   const save = (section: string) => {
@@ -95,6 +114,7 @@ function SettingsEditor({ settings, initialTab }: { settings: AppSettings; initi
           <TabsTrigger value="crawler" className="rounded-md px-4">抓取设置</TabsTrigger>
           <TabsTrigger value="llm" className="rounded-md px-4">LLM 设置</TabsTrigger>
           <TabsTrigger value="email" className="rounded-md px-4">邮件通知</TabsTrigger>
+          <TabsTrigger value="automation" className="rounded-md px-4">自动化中心</TabsTrigger>
           <TabsTrigger value="data" className="rounded-md px-4">数据与维护</TabsTrigger>
         </TabsList>
 
@@ -176,6 +196,9 @@ function SettingsEditor({ settings, initialTab }: { settings: AppSettings; initi
               <Field label="单家公司最大页面数">
                 <Input type="number" min={1} max={100} value={draft.crawler.maxPagesPerCompany} onChange={(e) => patch((s) => ({ ...s, crawler: { ...s.crawler, maxPagesPerCompany: Number(e.target.value) } }))} className="rounded-lg" />
               </Field>
+              <Field label="单次 DeepSeek 页面上限" hint="只统计新页面或正文发生变化的页面；缓存命中不计入">
+                <Input type="number" min={1} max={5000} value={draft.crawler.maxLlmPagesPerRun} onChange={(e) => patch((s) => ({ ...s, crawler: { ...s.crawler, maxLlmPagesPerRun: Number(e.target.value) } }))} className="rounded-lg" />
+              </Field>
               <Field label="请求超时（秒）">
                 <Input type="number" min={5} max={120} value={draft.crawler.requestTimeout} onChange={(e) => patch((s) => ({ ...s, crawler: { ...s.crawler, requestTimeout: Number(e.target.value) } }))} className="rounded-lg" />
               </Field>
@@ -209,8 +232,7 @@ function SettingsEditor({ settings, initialTab }: { settings: AppSettings; initi
                   <SelectTrigger className="rounded-lg"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="DeepSeek">DeepSeek</SelectItem>
-                    <SelectItem value="OpenAI">OpenAI</SelectItem>
-                    <SelectItem value="Anthropic">Anthropic</SelectItem>
+                    <SelectItem value="LiteLLM">LiteLLM（统一网关）</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
@@ -250,17 +272,7 @@ function SettingsEditor({ settings, initialTab }: { settings: AppSettings; initi
               <Button
                 variant="outline"
                 disabled={llmTesting}
-                onClick={async () => {
-                  setLlmTesting(true)
-                  try {
-                    const res = await testLlmConnection()
-                    toast.success('LLM 连接正常', { description: `模型 ${res.model} · 延迟 ${res.latencyMs}ms` })
-                  } catch (error) {
-                    toast.error('LLM 连接失败', { description: error instanceof Error ? error.message : '请检查 API 配置。' })
-                  } finally {
-                    setLlmTesting(false)
-                  }
-                }}
+                onClick={() => setLlmConfirmOpen(true)}
               >
                 {llmTesting ? <Loader2 className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
                 {llmTesting ? '正在测试…' : '测试连接'}
@@ -361,7 +373,104 @@ function SettingsEditor({ settings, initialTab }: { settings: AppSettings; initi
                 </Button>
               </div>
             </Card>
+
+            <Card className="space-y-4">
+              <CardTitle>其他推送渠道（Apprise）</CardTitle>
+              <p className="text-[12px] text-ink-tertiary">
+                支持 Telegram、企业微信、钉钉、ntfy 等渠道；URL 在 config.yaml 的
+                apprise.urls 中填写，保存后重启服务生效。推送筛选条件与邮件一致。
+              </p>
+              <div className="flex items-center justify-between rounded-lg bg-surface-subtle px-4 py-3">
+                <div>
+                  <p className="text-[14px] font-medium text-ink">
+                    {draft.apprise.configured
+                      ? `已配置 ${draft.apprise.urlCount} 个渠道`
+                      : '未配置渠道'}
+                  </p>
+                  <p className="text-[12px] text-ink-tertiary">
+                    {draft.apprise.enabled
+                      ? '启用中：扫描后将同时推送岗位摘要'
+                      : '当前未启用'}
+                  </p>
+                </div>
+                {draft.apprise.enabled ? <Pill tone="green">启用</Pill> : <Pill tone="gray">关闭</Pill>}
+              </div>
+              <div className="flex justify-end pt-1">
+                <Button
+                  variant="outline"
+                  disabled={appriseTesting || !draft.apprise.configured}
+                  onClick={async () => {
+                    setAppriseTesting(true)
+                    try {
+                      const res = await sendTestApprise()
+                      if (res.ok) toast.success(res.message)
+                      else toast.error('发送失败', { description: res.message })
+                    } catch (error) {
+                      toast.error('发送失败', { description: error instanceof Error ? error.message : '未知错误' })
+                    } finally {
+                      setAppriseTesting(false)
+                    }
+                  }}
+                >
+                  {appriseTesting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                  {appriseTesting ? '正在发送…' : '发送测试推送'}
+                </Button>
+              </div>
+            </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="automation" className="mt-5">
+          <Card className="max-w-3xl space-y-5">
+            <CardTitle>
+              <span className="flex items-center gap-2">
+                <CalendarClock className="size-4 text-brand" />
+                每日自动扫描
+              </span>
+            </CardTitle>
+            <div className="flex items-start justify-between gap-4 rounded-xl bg-surface-subtle p-4">
+              <div>
+                <p className="text-[15px] font-medium text-ink">
+                  {automation?.installed ? 'Windows 计划任务已安装' : '尚未安装 Windows 计划任务'}
+                </p>
+                <p className="mt-1 text-[13px] text-ink-secondary">
+                  {automation?.message ?? '正在检查本机计划任务状态…'}
+                </p>
+              </div>
+              <Pill tone={automation?.installed ? 'green' : 'gray'}>
+                {automation?.installed ? automation.state : '未安装'}
+              </Pill>
+            </div>
+            <dl className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-line p-3.5">
+                <dt className="text-[12px] text-ink-tertiary">每日运行时间</dt>
+                <dd className="mt-1 text-[16px] font-semibold text-ink">{draft.basic.dailyRunTime}</dd>
+              </div>
+              <div className="rounded-lg border border-line p-3.5">
+                <dt className="text-[12px] text-ink-tertiary">下次运行</dt>
+                <dd className="mt-1 text-[14px] font-medium text-ink">
+                  {automation?.nextRunAt ? new Date(automation.nextRunAt).toLocaleString('zh-CN') : '安装后由 Windows 计算'}
+                </dd>
+              </div>
+            </dl>
+            <div className="rounded-lg bg-success-soft px-4 py-3 text-[13px] text-success">
+              安装计划任务即表示允许每日监控在新页面或变化页面上调用 DeepSeek；单次调用范围受“抓取设置 → DeepSeek 页面上限”约束。缓存命中页面不会重复调用。连接测试和申请材料仍需单独人工确认。
+            </div>
+            <div className="flex justify-end gap-2.5">
+              {automation?.installed && (
+                <Button variant="outline" onClick={() => setAutomationAction('remove')}>
+                  移除计划任务
+                </Button>
+              )}
+              <Button
+                disabled={!automation?.supported}
+                onClick={() => setAutomationAction('install')}
+                className="bg-brand text-white hover:bg-brand-hover"
+              >
+                {automation?.installed ? '更新计划任务' : '安装每日计划任务'}
+              </Button>
+            </div>
+          </Card>
         </TabsContent>
 
         {/* 数据与维护 */}
@@ -445,6 +554,53 @@ function SettingsEditor({ settings, initialTab }: { settings: AppSettings; initi
           </div>
         </TabsContent>
       </Tabs>
+
+      <ConfirmDialog
+        open={automationAction !== null}
+        onOpenChange={(open) => !open && setAutomationAction(null)}
+        title={automationAction === 'remove' ? '移除每日计划任务？' : '安装每日计划任务？'}
+        description={
+          automationAction === 'remove'
+            ? '将从 Windows 任务计划程序中移除 Career Radar，每日扫描不再自动启动。'
+            : `将保存当前设置，并在 Windows 中创建每天 ${draft.basic.dailyRunTime} 运行的任务。新页面或变化页面可能调用 DeepSeek，单次最多分析 ${draft.crawler.maxLlmPagesPerRun} 页；未变化页面使用缓存。`
+        }
+        confirmLabel={automationAction === 'remove' ? '确认移除' : '确认安装'}
+        destructive={automationAction === 'remove'}
+        onConfirm={async () => {
+          const action = automationAction
+          if (!action) return
+          try {
+            if (action === 'install') await saveSettings.mutateAsync(draft)
+            await changeAutomation(action, draft.basic.dailyRunTime)
+            await refetchAutomation()
+            toast.success(action === 'install' ? '每日计划任务已安装' : '每日计划任务已移除')
+          } catch (error) {
+            toast.error('自动化设置失败', { description: error instanceof Error ? error.message : '请检查 Windows 任务计划程序。' })
+          } finally {
+            setAutomationAction(null)
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={llmConfirmOpen}
+        onOpenChange={setLlmConfirmOpen}
+        title="确认测试 DeepSeek 连接？"
+        description="本次测试会向当前 DeepSeek 模型发送一次最小结构化请求，可能产生少量 API 费用。系统不会自动重复测试。"
+        confirmLabel="确认并调用一次"
+        onConfirm={async () => {
+          setLlmConfirmOpen(false)
+          setLlmTesting(true)
+          try {
+            const res = await testLlmConnection(true)
+            toast.success('DeepSeek 连接正常', { description: `模型 ${res.model} · 延迟 ${res.latencyMs}ms` })
+          } catch (error) {
+            toast.error('DeepSeek 连接失败', { description: error instanceof Error ? error.message : '请检查 API 配置。' })
+          } finally {
+            setLlmTesting(false)
+          }
+        }}
+      />
 
       <ConfirmDialog
         open={!!dangerAction}
