@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import __version__
 from .api_applications import create_applications_router
 from .api_automation import create_automation_router
 from .api_candidates import create_candidates_router
@@ -371,7 +372,7 @@ def create_app(
 
     app = FastAPI(
         title="Career Radar Local API",
-        version="1.2.0",
+        version=__version__,
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
         lifespan=lifespan,

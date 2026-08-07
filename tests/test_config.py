@@ -1,6 +1,7 @@
 """配置读取测试：重点覆盖相对路径、环境变量和交叉字段校验。"""
 
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -276,3 +277,38 @@ def test_company_ats_source_loads_from_yaml(tmp_path: Path) -> None:
     assert settings.companies[0].ats_source is not None
     assert settings.companies[0].ats_source.type == "greenhouse"
     assert settings.companies[0].ats_source.tenant == "acme"
+
+
+def test_example_config_is_loadable() -> None:
+    """示例配置必须能通过完整校验，避免模板与真实配置双向漂移。"""
+
+    example = Path(__file__).resolve().parents[1] / "config.example.yaml"
+    settings = load_settings(example)
+
+    assert settings.companies
+    assert settings.app.semantic_duplicate_window_days == 90
+
+
+def test_requirements_are_subset_of_pyproject_dependencies() -> None:
+    """requirements.txt 与 pyproject.toml 必须保持一致，防止双份维护漂移。"""
+
+    root = Path(__file__).resolve().parents[1]
+    requirement_lines = [
+        line
+        for line in (root / "requirements.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line and not line.startswith("#") and not line.strip().startswith("-r")
+    ]
+    requirement_names = {
+        re.split(r"[<>=]", line, maxsplit=1)[0].strip().casefold()
+        for line in requirement_lines
+    }
+    pyproject_text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject_deps = {
+        match.group(1).casefold()
+        for match in re.finditer(r'^\s+"([A-Za-z0-9_.\-]+)', pyproject_text, re.M)
+    }
+
+    missing = sorted(requirement_names - pyproject_deps)
+    assert not missing, f"requirements.txt 中的依赖未在 pyproject.toml 声明：{missing}"

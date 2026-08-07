@@ -4,4 +4,9 @@
 这样测试、命令行帮助和第三方复用都会保持轻量、可预测。
 """
 
-__version__ = "1.2.0"
+try:
+    from importlib.metadata import PackageNotFoundError, version
+
+    __version__ = version("career-radar")
+except PackageNotFoundError:  # 直接以源码方式运行时回退到显式常量
+    __version__ = "1.2.0"

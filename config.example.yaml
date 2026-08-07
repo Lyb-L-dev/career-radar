@@ -146,14 +146,14 @@ companies:
     city: 厦门
     priority: high
     monitor_mode: jobs
-      enabled: false
-      discover_from_homepage: false
-      max_pages: 20
-      recruitment_channel: official_careers
-      # 集团统一招聘时改为 group_recruitment，并同时填写：
-      # parent_company: 示例集团
-      # attribution_keywords: [示例公司, 示例品牌]
-      notes: 请替换为企业官方招聘页；示例默认禁用，避免误访问。
+    enabled: false
+    discover_from_homepage: false
+    max_pages: 20
+    recruitment_channel: official_careers
+    # 集团统一招聘时改为 group_recruitment，并同时填写：
+    # parent_company: 示例集团
+    # attribution_keywords: [示例公司, 示例品牌]
+    notes: 请替换为企业官方招聘页；示例默认禁用，避免误访问。
 
       # 可选：使用 ATS 官方公开接口直接拉取岗位，替代 HTML 遍历。
       # 支持 greenhouse / lever / ashby（填写 tenant）以及 json_feed（自建 JSON 接口）：

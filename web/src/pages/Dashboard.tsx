@@ -119,8 +119,12 @@ function RecommendJobCard({ job }: { job: Job }) {
             size="sm"
             className={cn('text-ink-secondary', job.isFavorite && 'text-highlight')}
             onClick={() => {
-              toggleFav.mutate(job.id)
-              toast.success(job.isFavorite ? '已取消收藏' : '岗位已收藏')
+              toggleFav.mutate(job.id, {
+                onSuccess: (res) => toast.success(res.isFavorite ? '岗位已收藏' : '已取消收藏'),
+                onError: (error) => toast.error('操作失败', {
+                  description: error instanceof Error ? error.message : '未知错误',
+                }),
+              })
             }}
           >
             <Star className={cn('size-4', job.isFavorite && 'fill-current')} />

@@ -182,7 +182,12 @@ export default function JobsPage() {
           onClick={() => {
             markApplied.mutate(
               { id: job.id, applied: !job.isApplied },
-              { onSuccess: () => toast.success(job.isApplied ? '已取消投递标记' : '已标记为已投递') },
+              {
+                onSuccess: () => toast.success(!job.isApplied ? '已标记为已投递' : '已取消投递标记'),
+                onError: (error) => toast.error('操作失败', {
+                  description: error instanceof Error ? error.message : '未知错误',
+                }),
+              },
             )
           }}
         >
@@ -514,7 +519,12 @@ export default function JobsPage() {
                         onClick={() => {
                           toggleFav.mutate(
                             job.id,
-                            { onSuccess: () => toast.success(job.isFavorite ? '已取消收藏' : '岗位已收藏') },
+                            {
+                              onSuccess: (res) => toast.success(res.isFavorite ? '岗位已收藏' : '已取消收藏'),
+                              onError: (error) => toast.error('操作失败', {
+                                description: error instanceof Error ? error.message : '未知错误',
+                              }),
+                            },
                           )
                         }}
                       >
