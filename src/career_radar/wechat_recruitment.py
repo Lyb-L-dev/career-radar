@@ -22,8 +22,10 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from .models import JobPosting, WechatRecruitmentConfig
+from .public_errors import public_error_message
 from .reputation import Runner, _default_runner
 from .storage import JobStorage
+from .task_coordinator import TaskCoordinator, TaskCoordinatorClosed
 from .web_repository import WebRepository
 
 LOGGER = logging.getLogger(__name__)
@@ -72,18 +74,15 @@ def _safe_text(value: object, limit: int) -> str:
 
 
 def _public_error(value: object, limit: int = 600) -> str:
-    """保留诊断摘要，但移除用户目录和临时目录等本机路径。"""
+    """Compatibility wrapper around the shared public error policy."""
 
-    text = _safe_text(value, limit * 2)
-    for root in {str(Path.home()), tempfile.gettempdir()}:
-        if root:
-            text = re.sub(
-                re.escape(root),
-                "[本机路径]",
-                text,
-                flags=re.IGNORECASE,
-            )
-    return text[:limit]
+    if isinstance(value, BaseException):
+        return public_error_message(value, context="微信公众号扫描", limit=limit)
+    return public_error_message(
+        ValueError(str(value or "")),
+        context="微信公众号扫描",
+        limit=limit,
+    )
 
 
 def _identity_key(value: object) -> str:
@@ -492,15 +491,18 @@ class WechatRecruitmentManager:
         repository: WebRepository,
         *,
         connector_factory: Any = WechatOpenCLIConnector,
+        coordinator: TaskCoordinator | None = None,
     ) -> None:
         self.repository = repository
         self.connector_factory = connector_factory
+        self.coordinator = coordinator or TaskCoordinator()
         self._executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="wechat-recruitment",
         )
         self._lock = threading.Lock()
         self._active: Future[None] | None = None
+        self._closed = False
         self.repository.recover_interrupted_wechat_scans()
 
     def health(self) -> dict[str, Any]:
@@ -533,6 +535,8 @@ class WechatRecruitmentManager:
         if not accounts:
             raise ValueError("请先登记并启用至少一个企业招聘公众号")
         with self._lock:
+            if self._closed:
+                raise RuntimeError("API 服务正在关闭，暂不接受新的公众号扫描")
             if self._active is not None and not self._active.done():
                 raise RuntimeError("已有微信公众号招聘扫描正在运行")
             now = self._now()
@@ -599,22 +603,30 @@ class WechatRecruitmentManager:
         payload["status"] = "running"
         self._save(payload)
         try:
-            connector = self.connector_factory(
-                self.repository.settings.wechat_recruitment
-            )
-            health = connector.health()
-            if not health.get("available"):
-                raise WechatRecruitmentError(
-                    str(health.get("message") or "OpenCLI 微信命令不可用")
+            with self.coordinator.acquire(
+                "wechat",
+                scan_id,
+                {"opencli"},
+            ):
+                connector = self.connector_factory(
+                    self.repository.settings.wechat_recruitment
                 )
-            self._execute_scan(
-                payload,
-                connector,
-                candidate_id,
-                company_name,
-                accounts,
-            )
+                health = connector.health()
+                if not health.get("available"):
+                    raise WechatRecruitmentError(
+                        str(health.get("message") or "OpenCLI 微信命令不可用")
+                    )
+                self._execute_scan(
+                    payload,
+                    connector,
+                    candidate_id,
+                    company_name,
+                    accounts,
+                )
             payload["status"] = "partial" if payload["errors"] else "completed"
+        except TaskCoordinatorClosed:
+            payload["errors"].append("API 服务正在关闭，排队中的公众号扫描没有启动。")
+            payload["status"] = "interrupted"
         except Exception as exc:
             LOGGER.exception("微信公众号招聘扫描失败")
             payload["errors"].append(_public_error(exc))
@@ -624,6 +636,13 @@ class WechatRecruitmentManager:
         finally:
             payload["finishedAt"] = self._now()
             self._save(payload)
+
+    def shutdown(self, *, wait: bool = True) -> None:
+        """Stop accepting new WeChat scans and close the worker."""
+
+        with self._lock:
+            self._closed = True
+        self._executor.shutdown(wait=wait, cancel_futures=True)
 
     def _execute_scan(
         self,

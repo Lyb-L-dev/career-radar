@@ -9,11 +9,13 @@ import time
 import urllib.robotparser
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urljoin
 
 import requests
 
 from .models import CrawlerConfig
+from .network_policy import PublicTargetPolicy, UnsafeTargetError
 from .url_utils import canonicalize_url, normalize_request_url, origin_of
 
 LOGGER = logging.getLogger(__name__)
@@ -36,6 +38,9 @@ class FetchedPage:
     html: str
     rendered: bool
     status_code: int
+    not_modified: bool = False
+    etag: str | None = None
+    last_modified: str | None = None
 
 
 class RateLimiter:
@@ -86,10 +91,12 @@ class RobotsPolicy:
         session: requests.Session,
         config: CrawlerConfig,
         limiter: RateLimiter,
+        target_policy: PublicTargetPolicy | None = None,
     ) -> None:
         self.session = session
         self.config = config
         self.limiter = limiter
+        self.target_policy = target_policy or PublicTargetPolicy()
         self._cache: dict[str, _RobotsEntry] = {}
 
     def _load(self, url: str) -> _RobotsEntry:
@@ -98,36 +105,62 @@ class RobotsPolicy:
             return self._cache[origin]
 
         robots_url = f"{origin}/robots.txt"
-        self.limiter.wait(robots_url)
         try:
-            response = self.session.get(
-                robots_url,
-                timeout=self.config.request_timeout_seconds,
-                allow_redirects=True,
-                headers={"User-Agent": self.config.user_agent},
-            )
-        except requests.RequestException as exc:
+            current = robots_url
+            response = None
+            for _redirect in range(6):
+                self.target_policy.ensure_public(current)
+                self.limiter.wait(current)
+                response = self.session.get(
+                    current,
+                    timeout=self.config.request_timeout_seconds,
+                    allow_redirects=False,
+                    headers={"User-Agent": self.config.user_agent},
+                )
+                if response.status_code not in {301, 302, 303, 307, 308}:
+                    break
+                location = response.headers.get("Location")
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+                if not location:
+                    raise requests.RequestException("robots.txt 重定向缺少 Location")
+                current = normalize_request_url(urljoin(current, location))
+            else:
+                raise requests.RequestException("robots.txt 重定向次数过多")
+            if response is None:  # pragma: no cover - loop always performs one request
+                raise requests.RequestException("robots.txt 未返回响应")
+        except (requests.RequestException, UnsafeTargetError) as exc:
             # 无法确认规则时采取保守策略：本轮跳过该站点，而不是绕过合规检查。
             LOGGER.warning("robots.txt 获取失败，保守跳过站点 %s：%s", origin, exc)
             entry = _RobotsEntry(parser=None, deny_all=True)
         else:
-            if response.status_code == 200:
-                parser = urllib.robotparser.RobotFileParser()
-                parser.set_url(robots_url)
-                parser.parse(response.text.splitlines())
-                entry = _RobotsEntry(parser=parser)
-            elif response.status_code in {401, 403} or response.status_code >= 500:
-                # 认证拒绝或服务端暂时不可达时不冒险抓取。
-                entry = _RobotsEntry(parser=None, deny_all=True)
-            else:
-                # 404 等状态表示站点没有可用 robots.txt，允许访问公开页面。
-                entry = _RobotsEntry(parser=None, deny_all=False)
+            try:
+                if response.status_code == 200:
+                    parser = urllib.robotparser.RobotFileParser()
+                    parser.set_url(current)
+                    parser.parse(response.text.splitlines())
+                    entry = _RobotsEntry(parser=parser)
+                elif response.status_code in {401, 403} or response.status_code >= 500:
+                    # 认证拒绝或服务端暂时不可达时不冒险抓取。
+                    entry = _RobotsEntry(parser=None, deny_all=True)
+                else:
+                    # 404 等状态表示站点没有可用 robots.txt，允许访问公开页面。
+                    entry = _RobotsEntry(parser=None, deny_all=False)
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
         self._cache[origin] = entry
         return entry
 
     def ensure_allowed(self, url: str) -> None:
         """禁止时抛出专门异常，便于日报清楚说明跳过原因。"""
 
+        try:
+            self.target_policy.ensure_public(url)
+        except UnsafeTargetError as exc:
+            raise RobotsDeniedError(f"目标不是公开网络地址：{url}") from exc
         entry = self._load(url)
         if entry.deny_all:
             raise RobotsDeniedError(f"robots.txt 不可确认或禁止访问：{url}")
@@ -139,9 +172,15 @@ class RobotsPolicy:
 class _PlaywrightRenderer:
     """延迟启动浏览器；未启用 JS 渲染时不会产生额外进程。"""
 
-    def __init__(self, config: CrawlerConfig, limiter: RateLimiter) -> None:
+    def __init__(
+        self,
+        config: CrawlerConfig,
+        limiter: RateLimiter,
+        target_policy: PublicTargetPolicy,
+    ) -> None:
         self.config = config
         self.limiter = limiter
+        self.target_policy = target_policy
         self._manager = None
         self._browser = None
         self._context = None
@@ -157,13 +196,33 @@ class _PlaywrightRenderer:
         try:
             self._browser = self._manager.chromium.launch(headless=True)
             self._context = self._browser.new_context(user_agent=self.config.user_agent)
+            self._context.route("**/*", self._guard_request)
         except Exception:
             self.close()
             raise
 
+    def _guard_request(self, route: Any, request: Any) -> None:
+        """Block top-level redirects and subresources that target local networks."""
+
+        request_url = str(request.url)
+        if not request_url.startswith(("http://", "https://")):
+            route.continue_()
+            return
+        try:
+            self.target_policy.ensure_public(request_url)
+        except UnsafeTargetError:
+            LOGGER.warning("Playwright 已阻止非公开网络请求：%s", request_url)
+            route.abort("blockedbyclient")
+            return
+        route.continue_()
+
     def render(self, url: str) -> tuple[str, str]:
         """渲染公开页面，不填写表单、不点击登录，也不保存 Cookie。"""
 
+        try:
+            self.target_policy.ensure_public(url)
+        except UnsafeTargetError as exc:
+            raise CrawlError(f"Playwright 拒绝非公开网络目标：{url}") from exc
         self._start()
         assert self._context is not None
         self.limiter.wait(url)
@@ -203,6 +262,7 @@ class PageFetcher:
         *,
         session: requests.Session | None = None,
         limiter: RateLimiter | None = None,
+        target_policy: PublicTargetPolicy | None = None,
     ) -> None:
         self.config = config
         self.session = session or requests.Session()
@@ -211,8 +271,14 @@ class PageFetcher:
             config.request_delay_min_seconds,
             config.request_delay_max_seconds,
         )
-        self.robots = RobotsPolicy(self.session, config, self.limiter)
-        self.renderer = _PlaywrightRenderer(config, self.limiter)
+        self.target_policy = target_policy or PublicTargetPolicy()
+        self.robots = RobotsPolicy(
+            self.session,
+            config,
+            self.limiter,
+            self.target_policy,
+        )
+        self.renderer = _PlaywrightRenderer(config, self.limiter, self.target_policy)
 
     def __enter__(self) -> PageFetcher:
         return self
@@ -253,7 +319,11 @@ class PageFetcher:
                 continue
         return data.decode("utf-8", errors="replace")
 
-    def _static_fetch(self, url: str) -> FetchedPage:
+    def _static_fetch(
+        self,
+        url: str,
+        conditional_headers: Mapping[str, str] | None = None,
+    ) -> FetchedPage:
         """手动处理重定向，以便每个新目标在请求前都经过 robots 检查。"""
 
         current = canonicalize_url(url)
@@ -266,6 +336,11 @@ class PageFetcher:
                     timeout=self.config.request_timeout_seconds,
                     allow_redirects=False,
                     stream=True,
+                    headers=(
+                        dict(conditional_headers)
+                        if _redirect == 0
+                        else None
+                    ),
                 )
             except requests.RequestException as exc:
                 raise CrawlError(f"网络请求失败：{current}：{exc}") from exc
@@ -277,6 +352,17 @@ class PageFetcher:
                         raise CrawlError(f"重定向缺少 Location：{current}")
                     current = normalize_request_url(urljoin(current, location))
                     continue
+                if response.status_code == 304:
+                    return FetchedPage(
+                        url,
+                        current,
+                        "",
+                        False,
+                        304,
+                        not_modified=True,
+                        etag=response.headers.get("ETag"),
+                        last_modified=response.headers.get("Last-Modified"),
+                    )
                 if response.status_code >= 400:
                     raise CrawlError(f"HTTP {response.status_code}：{current}")
                 content_type = response.headers.get("Content-Type", "").casefold()
@@ -295,7 +381,15 @@ class PageFetcher:
                         raise CrawlError(f"页面超过下载上限：{current}")
                     chunks.append(chunk)
                 html = self._decode(b"".join(chunks), response.headers, response.encoding)
-                return FetchedPage(url, current, html, False, response.status_code)
+                return FetchedPage(
+                    url,
+                    current,
+                    html,
+                    False,
+                    response.status_code,
+                    etag=response.headers.get("ETag"),
+                    last_modified=response.headers.get("Last-Modified"),
+                )
         raise CrawlError(f"重定向次数过多：{url}")
 
     def _static_text_length(self, html: str) -> int:
@@ -315,10 +409,20 @@ class PageFetcher:
             and any(marker in html for marker in markers)
         )
 
-    def fetch(self, url: str) -> FetchedPage:
+    def fetch(
+        self,
+        url: str,
+        conditional_headers: Mapping[str, str] | None = None,
+    ) -> FetchedPage:
         """抓取一个页面；Playwright 失败时保留可用的静态 HTML。"""
 
-        static_page = self._static_fetch(url)
+        static_page = (
+            self._static_fetch(url, conditional_headers)
+            if conditional_headers
+            else self._static_fetch(url)
+        )
+        if static_page.not_modified:
+            return static_page
         should_render = self.config.render_mode == "always" or (
             self.config.render_mode == "auto" and self._looks_like_js_shell(static_page.html)
         )
@@ -328,7 +432,15 @@ class PageFetcher:
             html, final_url = self.renderer.render(static_page.final_url)
             final_url = canonicalize_url(final_url)
             self.robots.ensure_allowed(final_url)
-            return FetchedPage(url, final_url, html, True, static_page.status_code)
+            return FetchedPage(
+                url,
+                final_url,
+                html,
+                True,
+                static_page.status_code,
+                etag=static_page.etag,
+                last_modified=static_page.last_modified,
+            )
         except CrawlError as exc:
             if self.config.render_mode == "always":
                 raise

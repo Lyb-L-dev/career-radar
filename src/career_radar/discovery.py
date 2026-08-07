@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -10,6 +12,8 @@ from bs4 import BeautifulSoup
 
 from .models import LinkCandidate
 from .url_utils import canonicalize_url, resolve_http_url
+
+LOGGER = logging.getLogger(__name__)
 
 _CAREER_TERMS = (
     "career",
@@ -135,6 +139,47 @@ def _clean_visible_text(soup: BeautifulSoup) -> str:
     return "\n".join(cleaned)
 
 
+def _preferred_visible_text(
+    html: str,
+    fallback: str,
+    *,
+    extractor: Callable[[str], str | None] | None = None,
+) -> str:
+    """优先用 trafilatura 去除导航/页脚等样板文本，内容损失过大时回退到原清洗结果。
+
+    trafilatura 对正文型页面更干净（更省 LLM token），但招聘页有时依赖列表/卡片
+    结构，直接替换可能丢内容。因此只有 trafilatura 结果至少保留原正文一半以上
+    字符时才采用，其余情况一律回退，保证不会比现在的表现更差。
+    """
+
+    try:
+        if extractor is None:
+            import trafilatura
+
+            def extractor(html: str) -> str | None:
+                value = trafilatura.extract(
+                    html,
+                    include_comments=False,
+                    include_tables=False,
+                    favor_precision=True,
+                    output_format="txt",
+                )
+                return value.strip() if value else None
+
+        value = extractor(html)
+    except Exception as exc:  # 未安装或解析异常时安静回退
+        LOGGER.debug("trafilatura 正文提取不可用，回退到 BeautifulSoup：%s", exc)
+        return fallback
+
+    if not value:
+        return fallback
+    compact = "\n".join(line.strip() for line in value.splitlines() if line.strip())
+    if len(compact) < max(80, len(fallback) * 0.5):
+        LOGGER.debug("trafilatura 正文过短，回退到 BeautifulSoup 结果")
+        return fallback
+    return compact
+
+
 def _score_link(text: str, url: str) -> tuple[int, int]:
     """用可解释的关键词评分补充 LLM，避免入口很明显时仍完全依赖模型。"""
 
@@ -170,10 +215,12 @@ def parse_html(html: str, page_url: str) -> PageDocument:
 
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
-    text = _clean_visible_text(soup)
+    cleaned = _clean_visible_text(soup)
+    text = _preferred_visible_text(html, cleaned)
 
     emails: list[str] = []
-    for match in _EMAIL_PATTERN.findall(text):
+    # 邮箱可能位于导航/页脚中，仍从完整清洗结果里提取，避免 trafilatura 后丢失。
+    for match in _EMAIL_PATTERN.findall(cleaned):
         if match.casefold() not in {item.casefold() for item in emails}:
             emails.append(match)
     for anchor in soup.find_all("a", href=True):

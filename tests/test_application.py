@@ -241,7 +241,7 @@ def test_existing_version_five_database_is_upgraded_in_place(tmp_path: Path) -> 
         table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='application_runs'"
         ).fetchone()
-    assert version == 8
+    assert version == 10
     assert table == ("application_runs",)
 
 

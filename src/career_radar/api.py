@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .api_applications import create_applications_router
+from .api_automation import create_automation_router
 from .api_candidates import create_candidates_router
 from .api_companies import create_companies_router
 from .api_jobs import create_jobs_router
@@ -32,13 +33,18 @@ from .api_reputation import create_reputation_router
 from .api_runs import create_runs_router
 from .api_wechat import create_wechat_router
 from .application_manager import ApplicationManager
+from .automation import AutomationService
 from .config import ConfigError, is_api_key_placeholder
 from .config_editor import mutate_config_blocks, update_config_blocks
 from .llm import create_provider
 from .mailer import MailError, send_test_email
 from .models import CandidateProfile
+from .notifications import NotificationError, send_test_notification
+from .public_errors import public_error_message
 from .reputation import ReputationManager
 from .run_manager import RunManager
+from .storage import JobStorage
+from .task_coordinator import TaskCoordinator
 from .web_repository import WebRepository
 from .wechat_recruitment import WechatRecruitmentManager
 
@@ -94,13 +100,14 @@ class CrawlerSettingsPayload(BaseModel):
     defaultRenderMode: str = Field(pattern=r"^(auto|static|dynamic)$")
     minContentLength: int = Field(ge=0)
     maxPagesPerCompany: int = Field(ge=1, le=5000)
+    maxLlmPagesPerRun: int = Field(ge=1, le=5000)
     requestTimeout: float = Field(gt=0)
     respectRobots: bool
 
 
 class LlmSettingsPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    provider: str = Field(pattern=r"^(DeepSeek|OpenAI|Anthropic)$")
+    provider: str = Field(pattern=r"^(DeepSeek|OpenAI|Anthropic|LiteLLM)$")
     model: str = Field(min_length=1)
     apiBaseUrl: str = ""
     apiKeyMasked: str = ""
@@ -110,6 +117,13 @@ class LlmSettingsPayload(BaseModel):
     chunkOverlap: int = Field(ge=0)
     timeout: float = Field(gt=0)
     retries: int = Field(ge=1, le=10)
+
+
+class PaidActionConfirmation(BaseModel):
+    """Explicit acknowledgement required before spending model quota."""
+
+    model_config = ConfigDict(extra="forbid")
+    confirmed: bool = False
 
 
 class EmailSettingsPayload(BaseModel):
@@ -126,12 +140,22 @@ class EmailSettingsPayload(BaseModel):
     maxDifficulty: int = Field(ge=1, le=10)
 
 
+class AppriseSettingsPayload(BaseModel):
+    """Apprise 推送只读状态；URL 属于敏感配置，仍通过 config.yaml 编辑。"""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    urlCount: int = Field(ge=0, le=50)
+    configured: bool
+
+
 class SettingsPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     basic: BasicSettingsPayload
     crawler: CrawlerSettingsPayload
     llm: LlmSettingsPayload
     email: EmailSettingsPayload
+    apprise: AppriseSettingsPayload
 
 
 def _profile_json(candidate: CandidateProfile) -> dict[str, Any]:
@@ -195,6 +219,12 @@ def _profile_json(candidate: CandidateProfile) -> dict[str, Any]:
 
 
 def _api_key_configured(provider: str) -> bool:
+    if provider == "litellm":
+        # LiteLLM 依赖各供应商约定的环境变量，只要有一个有效即可视为已配置。
+        return any(
+            not is_api_key_placeholder(os.getenv(name))
+            for name in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+        )
     variable = {
         "deepseek": "DEEPSEEK_API_KEY",
         "openai": "OPENAI_API_KEY",
@@ -242,6 +272,7 @@ def _settings_json(settings, config_root: Path) -> dict[str, Any]:  # type: igno
         "deepseek": "DeepSeek",
         "openai": "OpenAI",
         "anthropic": "Anthropic",
+        "litellm": "LiteLLM",
     }[settings.llm.provider]
     encryption = "SSL" if settings.smtp.use_ssl else ("STARTTLS" if settings.smtp.use_starttls else "none")
     return {
@@ -258,6 +289,7 @@ def _settings_json(settings, config_root: Path) -> dict[str, Any]:  # type: igno
             "defaultRenderMode": render_mode,
             "minContentLength": settings.crawler.min_static_text_chars,
             "maxPagesPerCompany": settings.crawler.max_pages_per_company,
+            "maxLlmPagesPerRun": settings.crawler.max_llm_pages_per_run,
             "requestTimeout": settings.crawler.request_timeout_seconds,
             "respectRobots": True,
         },
@@ -285,6 +317,11 @@ def _settings_json(settings, config_root: Path) -> dict[str, Any]:  # type: igno
             "minMatchLevel": settings.app.notify_match_levels[0].value,
             "maxDifficulty": settings.app.notify_max_difficulty_score,
         },
+        "apprise": {
+            "enabled": settings.apprise.enabled,
+            "urlCount": len(settings.apprise.urls),
+            "configured": bool(settings.apprise.urls),
+        },
     }
 
 
@@ -308,15 +345,29 @@ def create_app(
     config_file = Path(config_path).expanduser().resolve()
     repository = WebRepository(config_file)
     repository.initialize()
-    run_manager = RunManager(repository)
-    reputation_manager = ReputationManager(repository)
-    application_manager = ApplicationManager(repository)
-    wechat_recruitment_manager = WechatRecruitmentManager(repository)
+    task_coordinator = TaskCoordinator()
+    run_manager = RunManager(repository, task_coordinator)
+    reputation_manager = ReputationManager(repository, task_coordinator)
+    application_manager = ApplicationManager(repository, task_coordinator)
+    wechat_recruitment_manager = WechatRecruitmentManager(
+        repository,
+        coordinator=task_coordinator,
+    )
+    automation_service = AutomationService(config_file)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         repository.initialize()
-        yield
+        try:
+            yield
+        finally:
+            task_coordinator.shutdown()
+            await asyncio.gather(
+                asyncio.to_thread(run_manager.shutdown),
+                asyncio.to_thread(reputation_manager.shutdown),
+                asyncio.to_thread(application_manager.shutdown),
+                asyncio.to_thread(wechat_recruitment_manager.shutdown),
+            )
 
     app = FastAPI(
         title="Career Radar Local API",
@@ -330,6 +381,8 @@ def create_app(
     app.state.reputation_manager = reputation_manager
     app.state.application_manager = application_manager
     app.state.wechat_recruitment_manager = wechat_recruitment_manager
+    app.state.task_coordinator = task_coordinator
+    app.state.automation_service = automation_service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=repository.settings.app.cors_origins,
@@ -338,6 +391,7 @@ def create_app(
         allow_headers=["Content-Type"],
     )
     app.include_router(create_jobs_router(repository))
+    app.include_router(create_automation_router(repository, automation_service))
     app.include_router(create_applications_router(repository, application_manager))
     app.include_router(create_reputation_router(repository, reputation_manager))
     app.include_router(create_runs_router(repository, run_manager))
@@ -433,6 +487,9 @@ def create_app(
                     ],
                     "min_static_text_chars": int(crawler_input["minContentLength"]),
                     "max_pages_per_company": int(crawler_input["maxPagesPerCompany"]),
+                    "max_llm_pages_per_run": int(
+                        crawler_input["maxLlmPagesPerRun"]
+                    ),
                     "request_timeout_seconds": float(crawler_input["requestTimeout"]),
                 }
             )
@@ -468,8 +525,28 @@ def create_app(
             raise HTTPException(422, str(exc)) from exc
         return {"ok": True}
 
+    @app.get("/api/settings/test-llm/preflight")
+    def test_llm_preflight() -> dict[str, Any]:
+        settings = repository.settings
+        return {
+            "requiresConfirmation": True,
+            "provider": (
+                "DeepSeek"
+                if settings.llm.provider == "deepseek"
+                else settings.llm.provider
+            ),
+            "model": settings.llm.model,
+            "estimatedCalls": 1,
+            "message": "连接测试会发送一次最小结构化请求，可能产生少量费用。",
+        }
+
     @app.post("/api/settings/test-llm")
-    async def test_llm() -> dict[str, Any]:
+    async def test_llm(payload: PaidActionConfirmation) -> dict[str, Any]:
+        if not payload.confirmed:
+            raise HTTPException(428, "请先确认本次测试会产生一次 DeepSeek API 调用")
+        if repository.settings.llm.provider != "deepseek":
+            raise HTTPException(422, "当前部署只允许测试 DeepSeek 连接")
+
         def call() -> tuple[int, str]:
             settings = repository.settings
             provider = create_provider(settings.llm)
@@ -480,7 +557,10 @@ def create_app(
         try:
             latency, model = await asyncio.to_thread(call)
         except Exception as exc:
-            raise HTTPException(502, f"LLM 连接失败：{type(exc).__name__}: {exc}") from exc
+            raise HTTPException(
+                502,
+                public_error_message(exc, context="DeepSeek 连接测试"),
+            ) from exc
         return {"ok": True, "latencyMs": latency, "model": model}
 
     @app.post("/api/settings/test-email")
@@ -491,6 +571,14 @@ def create_app(
             raise HTTPException(502, str(exc)) from exc
         return {"ok": True, "message": "测试邮件已发送，请检查收件箱"}
 
+    @app.post("/api/settings/test-apprise")
+    async def test_apprise() -> dict[str, Any]:
+        try:
+            await asyncio.to_thread(send_test_notification, repository.settings.apprise)
+        except NotificationError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {"ok": True, "message": "测试推送已发送，请检查对应渠道"}
+
     @app.get("/api/settings/db-stats")
     def db_stats() -> dict[str, Any]:
         return repository.database_stats()
@@ -499,9 +587,10 @@ def create_app(
     def maintenance(action: str) -> dict[str, Any]:
         settings = repository.settings
         if action == "rebuildIndex":
+            JobStorage(settings.app.database_path).reset_job_embeddings()
             with repository.transaction() as connection:
                 connection.execute("REINDEX")
-            return {"ok": True, "message": "SQLite 索引已重建"}
+            return {"ok": True, "message": "SQLite 索引与语义向量已重建"}
         if action == "recalcMatch":
             return {"ok": True, "message": "新画像将在下一次真实扫描中生效"}
         if action == "clearLogs":

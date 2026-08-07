@@ -239,6 +239,50 @@ def test_health_and_settings_do_not_expose_absolute_local_paths(tmp_path: Path) 
     assert str(tmp_path) not in json.dumps(settings.json(), ensure_ascii=False)
 
 
+def test_llm_connection_test_requires_explicit_paid_call_confirmation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _config_path = _client(tmp_path)
+    calls: list[str] = []
+
+    class FakeProvider:
+        def analyze(self, prompt: str):
+            calls.append(prompt)
+            return object()
+
+    monkeypatch.setattr("career_radar.api.create_provider", lambda _config: FakeProvider())
+
+    with client:
+        preflight = client.get("/api/settings/test-llm/preflight")
+        rejected = client.post("/api/settings/test-llm", json={"confirmed": False})
+        confirmed = client.post("/api/settings/test-llm", json={"confirmed": True})
+
+    assert preflight.json()["estimatedCalls"] == 1
+    assert preflight.json()["provider"] == "DeepSeek"
+    assert rejected.status_code == 428
+    assert len(calls) == 1
+    assert confirmed.status_code == 200
+
+
+def test_automation_api_requires_confirmation_before_system_changes(
+    tmp_path: Path,
+) -> None:
+    client, _config_path = _client(tmp_path)
+
+    with client:
+        preview = client.get("/api/automation/preview", params={"dailyRunTime": "08:15"})
+        rejected = client.post(
+            "/api/automation/install",
+            json={"confirmed": False, "dailyRunTime": "08:15"},
+        )
+
+    assert preview.status_code == 200
+    assert preview.json()["dailyRunTime"] == "08:15"
+    assert str(tmp_path) not in json.dumps(preview.json(), ensure_ascii=False)
+    assert rejected.status_code == 428
+
+
 def test_settings_reject_absolute_paths_without_changing_config(tmp_path: Path) -> None:
     client, config_path = _client(tmp_path)
     before = config_path.read_bytes()
@@ -328,6 +372,41 @@ def test_jobs_and_favorite_state_come_from_sqlite(tmp_path: Path) -> None:
     assert favorite.json() == {"isFavorite": True}
     assert detail["isFavorite"] is True
     assert detail["jdText"] == _job().description
+
+
+def test_ignore_job_update_only_hides_the_current_content_version(tmp_path: Path) -> None:
+    client, config_path = _client(tmp_path)
+    storage = JobStorage(load_settings(config_path).app.database_path)
+    first = _job()
+    event = storage.store_jobs([first], "2026-07-18T09:47:00+08:00")[0]
+    changed = first.model_copy(update={"description": f"{first.description}\n新增职责"})
+    storage.store_jobs([changed], "2026-07-19T09:47:00+08:00")
+
+    with client:
+        before = client.get(f"/api/jobs/{event.entity_key}")
+        ignored = client.post(f"/api/jobs/{event.entity_key}/ignore-update")
+        after = client.get(f"/api/jobs/{event.entity_key}")
+
+    assert before.json()["status"] == "updated"
+    assert ignored.json() == {"ok": True}
+    assert after.json()["status"] == "ignored"
+
+    changed_again = changed.model_copy(
+        update={"description": f"{changed.description}\n又一项职责"}
+    )
+    storage.store_jobs([changed_again], "2026-07-20T09:47:00+08:00")
+    with client:
+        latest = client.get(f"/api/jobs/{event.entity_key}")
+    assert latest.json()["status"] == "updated"
+
+
+def test_ignore_missing_job_returns_404(tmp_path: Path) -> None:
+    client, _config_path = _client(tmp_path)
+
+    with client:
+        response = client.post("/api/jobs/not-a-job/ignore-update")
+
+    assert response.status_code == 404
 
 
 def test_job_list_loads_settings_once_per_request(tmp_path: Path, monkeypatch) -> None:
@@ -453,6 +532,73 @@ def test_company_api_rejects_private_network_targets(tmp_path: Path) -> None:
     assert "不允许监控" in response.json()["detail"]
 
 
+def test_company_csv_import_previews_deduplicates_and_commits_atomically(
+    tmp_path: Path,
+) -> None:
+    client, config_path = _client(tmp_path)
+    csv_text = (
+        "企业名称,官网地址,招聘入口,公司类型,行业,省份,城市,是否启用\n"
+        "测试公司,https://example.com,,,,,,是\n"
+        "新企业,https://new.example.com,https://new.example.com/careers,"
+        "民营,人工智能与数据,福建,福州,是\n"
+    )
+
+    with client:
+        preview = client.post(
+            "/api/companies/import/preview",
+            json={"csvText": csv_text},
+        )
+        unconfirmed = client.post(
+            "/api/companies/import/commit",
+            json={"csvText": csv_text, "confirmed": False},
+        )
+        committed = client.post(
+            "/api/companies/import/commit",
+            json={"csvText": csv_text, "confirmed": True},
+        )
+
+    assert preview.status_code == 200
+    assert preview.json()["stats"] == {
+        "total": 2,
+        "valid": 1,
+        "duplicate": 1,
+        "invalid": 0,
+    }
+    assert preview.json()["canCommit"] is True
+    assert unconfirmed.status_code == 422
+    assert committed.json() == {"ok": True, "imported": 1, "skipped": 1}
+    saved = load_settings(config_path)
+    assert [company.name for company in saved.companies] == ["测试公司", "新企业"]
+    assert saved.companies[-1].industry_category.value == "ai_data"
+    assert saved.companies[-1].discover_from_homepage is False
+
+
+def test_company_csv_import_with_invalid_row_writes_nothing(tmp_path: Path) -> None:
+    client, config_path = _client(tmp_path)
+    csv_text = (
+        "name,website,company_type\n"
+        "可以解析,https://valid.example.com,private\n"
+        "无效内网,http://127.0.0.1:9000,private\n"
+    )
+    before = config_path.read_bytes()
+
+    with client:
+        preview = client.post(
+            "/api/companies/import/preview",
+            json={"csvText": csv_text},
+        )
+        commit = client.post(
+            "/api/companies/import/commit",
+            json={"csvText": csv_text, "confirmed": True},
+        )
+
+    assert preview.status_code == 200
+    assert preview.json()["stats"]["invalid"] == 1
+    assert preview.json()["canCommit"] is False
+    assert commit.status_code == 422
+    assert config_path.read_bytes() == before
+
+
 def test_company_route_modules_preserve_public_api_contract(tmp_path: Path) -> None:
     client, _config_path = _client(tmp_path)
 
@@ -461,6 +607,8 @@ def test_company_route_modules_preserve_public_api_contract(tmp_path: Path) -> N
     expected_methods = {
         "/api/companies": {"get", "post"},
         "/api/companies/bulk-delete": {"post"},
+        "/api/companies/import/preview": {"post"},
+        "/api/companies/import/commit": {"post"},
         "/api/companies/{identifier}": {"get", "patch", "delete"},
         "/api/companies/test": {"post"},
         "/api/company-candidates": {"get"},

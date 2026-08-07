@@ -20,6 +20,12 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from .config import load_settings
+from .embeddings import (
+    PROVIDER_NAME,
+    VECTOR_DIMENSION,
+    cosine_similarity,
+    feature_hash_vector,
+)
 from .models import CompanyConfig, JobPosting, ProfileFitLevel, Settings
 from .storage import JobStorage
 
@@ -312,7 +318,15 @@ class WebRepository:
         )
         host = urlsplit(job.source_url).netloc or "企业官网"
         latest_event = row["latest_event"] or "new"
-        status = "updated" if latest_event == "updated" else "new"
+        current_update_ignored = (
+            latest_event == "updated"
+            and row["ignored_content_hash"] == row["content_hash"]
+        )
+        status = (
+            "ignored"
+            if current_update_ignored
+            else ("updated" if latest_event == "updated" else "new")
+        )
         compact_history = history if history is not None else [
             {
                 "id": f"latest-{row['entity_key']}",
@@ -413,6 +427,7 @@ class WebRepository:
                        COALESCE(s.is_favorite, 0) AS is_favorite,
                        COALESCE(s.is_applied, 0) AS is_applied,
                        COALESCE(s.not_interested, 0) AS not_interested,
+                       s.ignored_content_hash AS ignored_content_hash,
                        (SELECT h.event_type FROM job_history h
                         WHERE h.entity_key = j.entity_key ORDER BY h.id DESC LIMIT 1) AS latest_event
                 FROM jobs j
@@ -436,6 +451,7 @@ class WebRepository:
                        COALESCE(s.is_favorite, 0) AS is_favorite,
                        COALESCE(s.is_applied, 0) AS is_applied,
                        COALESCE(s.not_interested, 0) AS not_interested,
+                       s.ignored_content_hash AS ignored_content_hash,
                        (SELECT h.event_type FROM job_history h
                         WHERE h.entity_key = j.entity_key ORDER BY h.id DESC LIMIT 1) AS latest_event
                 FROM jobs j
@@ -459,6 +475,7 @@ class WebRepository:
                        COALESCE(s.is_favorite, 0) AS is_favorite,
                        COALESCE(s.is_applied, 0) AS is_applied,
                        COALESCE(s.not_interested, 0) AS not_interested,
+                       s.ignored_content_hash AS ignored_content_hash,
                        (SELECT h.event_type FROM job_history h
                         WHERE h.entity_key = j.entity_key ORDER BY h.id DESC LIMIT 1) AS latest_event
                 FROM jobs j LEFT JOIN web_job_state s ON s.entity_key = j.entity_key
@@ -470,6 +487,34 @@ class WebRepository:
                 return None
             history = self._history(connection, entity_key)
         return self._job_json(row, settings=settings, history=history)
+
+    def similar_jobs(self, job_id: str, limit: int = 5) -> list[dict[str, Any]]:
+        """按本地语义向量返回与指定岗位最相似的岗位，结果带相似度分数。"""
+
+        settings = self.settings
+        storage = JobStorage(settings.app.database_path)
+        storage.ensure_job_embeddings(
+            PROVIDER_NAME,
+            VECTOR_DIMENSION,
+            feature_hash_vector,
+        )
+        vectors = storage.load_job_embeddings()
+        target = vectors.get(job_id)
+        if target is None:
+            return []
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for job in self.list_jobs():
+            vector = vectors.get(job["id"])
+            if vector is None or job["id"] == job_id:
+                continue
+            score = cosine_similarity(target, vector)
+            if score >= 0.12:
+                scored.append((score, job))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [
+            {**job, "similarity": round(score, 4)}
+            for score, job in scored[:limit]
+        ]
 
     def set_job_state(self, entity_keys: list[str], field: str, value: bool) -> None:
         columns = {
@@ -498,6 +543,30 @@ class WebRepository:
                     f"UPDATE web_job_state SET {column} = ?, updated_at = ? WHERE entity_key = ?",
                     (int(value), now, entity_key),
                 )
+
+    def ignore_job_update(self, entity_key: str) -> bool:
+        """仅忽略岗位当前内容版本；后续内容变化会自动恢复为“已更新”。"""
+
+        now = datetime.now(ZoneInfo(self.settings.app.timezone)).isoformat(timespec="seconds")
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT content_hash FROM jobs WHERE entity_key = ?",
+                (entity_key,),
+            ).fetchone()
+            if row is None:
+                return False
+            connection.execute(
+                """
+                INSERT INTO web_job_state(
+                    entity_key, ignored_content_hash, updated_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(entity_key) DO UPDATE SET
+                    ignored_content_hash = excluded.ignored_content_hash,
+                    updated_at = excluded.updated_at
+                """,
+                (entity_key, row["content_hash"], now),
+            )
+        return True
 
     def list_companies(self) -> list[dict[str, Any]]:
         settings = self.settings
@@ -583,6 +652,11 @@ class WebRepository:
                     "city": company.city,
                     "priority": company.priority.value,
                     "monitorMode": company.monitor_mode.value,
+                    "atsSource": (
+                        company.ats_source.type.value
+                        if company.ats_source is not None and company.ats_source.enabled
+                        else None
+                    ),
                     "governmentHonors": company.government_honors,
                     "evidenceUrls": company.evidence_urls,
                     "status": status,
@@ -1191,8 +1265,8 @@ class WebRepository:
                 INSERT INTO web_page_visits(
                     run_id, company_id, company_name, requested_url, final_url,
                     page_type, method, http_status, content_length, llm_extracted,
-                    jobs_found, status, error, fetched_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cache_status, jobs_found, status, error, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -1205,6 +1279,7 @@ class WebRepository:
                     event.get("httpStatus"),
                     int(event.get("contentLength") or 0),
                     int(bool(event.get("llmExtracted"))),
+                    event.get("cacheStatus"),
                     int(event.get("jobsFound") or 0),
                     event.get("status") or "failed",
                     event.get("error"),
@@ -1247,6 +1322,7 @@ class WebRepository:
                 "httpStatus": row["http_status"],
                 "contentLength": row["content_length"],
                 "llmExtracted": bool(row["llm_extracted"]),
+                "cacheStatus": row["cache_status"],
                 "jobsFound": row["jobs_found"],
                 "status": row["status"],
                 "error": row["error"],

@@ -22,6 +22,7 @@ from .company_catalog import (
 from .company_website import discover_official_website
 from .config_editor import mutate_config_blocks
 from .models import JobPosting
+from .public_errors import public_error_message
 from .reputation import OpenCLIConnector, OpenCLIError
 from .storage import JobStorage
 from .web_repository import WebRepository
@@ -408,7 +409,8 @@ def create_candidates_router(
         except (OpenCLIError, subprocess.SubprocessError) as exc:
             raise HTTPException(
                 503,
-                f"官网自动查找暂不可用：{exc}。请确认 OpenCLI 扩展已连接，或手动填写官网。",
+                public_error_message(exc, context="官网自动查找")
+                + "。请确认 OpenCLI 扩展已连接，或手动填写官网。",
             ) from exc
 
         if result["status"] == "found" and result.get("website"):

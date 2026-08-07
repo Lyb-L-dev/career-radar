@@ -2,7 +2,13 @@
 
 from pathlib import Path
 
-from career_radar.discovery import heuristic_follow_links, parse_html
+import pytest
+
+from career_radar.discovery import (
+    _preferred_visible_text,
+    heuristic_follow_links,
+    parse_html,
+)
 from career_radar.url_utils import canonicalize_crawl_url, normalize_request_url
 
 
@@ -113,3 +119,46 @@ def test_image_only_year_zp_archive_is_treated_as_job_detail() -> None:
     follow = heuristic_follow_links(document, "mixed", 20)
 
     assert follow == ["https://example.com/archives/2026zp"]
+
+
+def _raise(*_args: object) -> None:
+    raise RuntimeError("extractor crashed")
+
+
+def test_preferred_text_falls_back_when_extractor_unavailable() -> None:
+    fallback = "正文内容" * 120
+    assert _preferred_visible_text(
+        "<html></html>", fallback, extractor=lambda html: None
+    ) == fallback
+    assert _preferred_visible_text(
+        "<html></html>", fallback, extractor=_raise
+    ) == fallback
+
+
+def test_preferred_text_rejects_too_short_result() -> None:
+    fallback = "正文内容" * 120
+    assert _preferred_visible_text(
+        "<html></html>", fallback, extractor=lambda html: "太短的结果"
+    ) == fallback
+
+
+def test_preferred_text_uses_cleaner_result_when_enough_content() -> None:
+    fallback = "导航链接\n" * 60
+    cleaner = "岗位职责正文" + "详细内容" * 40
+    result = _preferred_visible_text(
+        "<html></html>", fallback, extractor=lambda html: cleaner
+    )
+    assert result == cleaner
+
+
+def test_parse_html_prefers_trafilatura_when_installed() -> None:
+    pytest.importorskip("trafilatura")
+    body = "岗位职责：负责系统设计与实现。" + "详细技术要求。" * 80
+    document = parse_html(
+        f"<html><head><title>招聘</title></head>"
+        f"<body><nav>首页 关于我们 产品中心</nav><div class='article'>{body}</div>"
+        f"<footer>备案号 ©2026</footer></body></html>",
+        "https://example.com/careers",
+    )
+    assert "岗位职责" in document.text
+    assert len(document.text) >= 100

@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from ..public_errors import public_error_message
 from .content import ApplicationContentGenerator
 from .evaluator import JobApplicationEvaluator
 from .models import ApplicationRun, ApplicationStatus
@@ -43,7 +44,11 @@ class ApplicationWorkflow:
 
     def _fail(self, application_id: str, exc: Exception) -> ApplicationRun:
         LOGGER.exception("申请任务 %s 在当前步骤失败", application_id)
-        return self.repository.mark_failed(application_id, str(exc), self._now())
+        return self.repository.mark_failed(
+            application_id,
+            public_error_message(exc, context="申请材料生成"),
+            self._now(),
+        )
 
     def evaluate(self, application_id: str) -> ApplicationRun:
         run = self.repository.get_run(application_id)

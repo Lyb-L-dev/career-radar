@@ -16,6 +16,8 @@ from .application.models import ApplicationRun, ApplicationStatus
 from .application.repository import ApplicationRepository
 from .application.service import ApplicationService
 from .application.workflow import ApplicationWorkflow
+from .public_errors import public_error_message
+from .task_coordinator import TaskCoordinator
 from .web_repository import WebRepository
 
 LOGGER = logging.getLogger(__name__)
@@ -28,14 +30,20 @@ class ApplicationConflictError(RuntimeError):
 class ApplicationManager:
     """后台单线程管理器，避免多次点击造成重复 LLM 调用和文件竞争。"""
 
-    def __init__(self, web_repository: WebRepository) -> None:
+    def __init__(
+        self,
+        web_repository: WebRepository,
+        coordinator: TaskCoordinator | None = None,
+    ) -> None:
         self.web_repository = web_repository
+        self.coordinator = coordinator or TaskCoordinator()
         self._executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="career-radar-application",
         )
         self._lock = threading.Lock()
         self._active_ids: set[str] = set()
+        self._closed = False
         self._recover_orphaned_runs()
 
     def _recover_orphaned_runs(self) -> None:
@@ -102,6 +110,8 @@ class ApplicationManager:
 
     def _submit(self, application_id: str, action: str) -> None:
         with self._lock:
+            if self._closed:
+                raise ApplicationConflictError("API 服务正在关闭，暂不接受新的申请任务")
             if application_id in self._active_ids:
                 raise ApplicationConflictError("该申请任务正在执行，请勿重复操作")
             self._active_ids.add(application_id)
@@ -212,23 +222,35 @@ class ApplicationManager:
         }:
             return
         service = ApplicationService(repository, self.web_repository.settings.application, timezone)
-        repository.mark_failed(application_id, str(exc), service.now())
+        repository.mark_failed(
+            application_id,
+            public_error_message(exc, context="申请任务"),
+            service.now(),
+        )
 
     def _execute(self, application_id: str, action: str) -> None:
         settings = None
         repository = None
         try:
             settings, repository, _service = self._dependencies()
-            if action == "evaluate":
-                self._application_workflow(settings, repository).evaluate(application_id)
-            elif action == "content":
-                run = self._application_workflow(settings, repository).resume(application_id)
-                if run.status == ApplicationStatus.RENDERING:
+            resources = {"document"} if action == "document" else {"deepseek"}
+            if action == "content":
+                resources.add("document")
+            with self.coordinator.acquire(
+                "application",
+                application_id,
+                resources,
+            ):
+                if action == "evaluate":
+                    self._application_workflow(settings, repository).evaluate(application_id)
+                elif action == "content":
+                    run = self._application_workflow(settings, repository).resume(application_id)
+                    if run.status == ApplicationStatus.RENDERING:
+                        self._document_workflow(settings, repository).run(application_id)
+                elif action == "document":
                     self._document_workflow(settings, repository).run(application_id)
-            elif action == "document":
-                self._document_workflow(settings, repository).run(application_id)
-            else:
-                raise ValueError(f"未知申请后台动作：{action}")
+                else:
+                    raise ValueError(f"未知申请后台动作：{action}")
         except Exception as exc:
             LOGGER.exception("申请任务后台执行失败：%s", application_id)
             if settings is not None and repository is not None:
@@ -244,3 +266,10 @@ class ApplicationManager:
         finally:
             with self._lock:
                 self._active_ids.discard(application_id)
+
+    def shutdown(self, *, wait: bool = True) -> None:
+        """Stop accepting new application actions and close the worker."""
+
+        with self._lock:
+            self._closed = True
+        self._executor.shutdown(wait=wait, cancel_futures=True)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from .web_repository import WebRepository
@@ -44,6 +44,15 @@ def create_jobs_router(repository: WebRepository) -> APIRouter:
             raise HTTPException(404, "岗位不存在")
         return job
 
+    @router.get("/jobs/{job_id}/similar")
+    def similar_jobs(
+        job_id: str,
+        limit: int = Query(default=5, ge=1, le=20),
+    ) -> list[dict[str, Any]]:
+        if repository.get_job(job_id) is None:
+            raise HTTPException(404, "岗位不存在")
+        return repository.similar_jobs(job_id, limit)
+
     @router.post("/jobs/{job_id}/favorite")
     def favorite_job(job_id: str, payload: JobStatePayload) -> dict[str, Any]:
         repository.set_job_state([job_id], "favorite", payload.value)
@@ -52,6 +61,12 @@ def create_jobs_router(repository: WebRepository) -> APIRouter:
     @router.post("/jobs/{job_id}/applied")
     def applied_job(job_id: str, payload: JobStatePayload) -> dict[str, bool]:
         repository.set_job_state([job_id], "applied", payload.value)
+        return {"ok": True}
+
+    @router.post("/jobs/{job_id}/ignore-update")
+    def ignore_job_update(job_id: str) -> dict[str, bool]:
+        if not repository.ignore_job_update(job_id):
+            raise HTTPException(404, "岗位不存在")
         return {"ok": True}
 
     @router.post("/jobs/not-interested")

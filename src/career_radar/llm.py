@@ -397,6 +397,101 @@ class AnthropicProvider(LLMProvider):
             raise RetryableLLMError(f"Claude 口碑结构校验失败：{exc}") from exc
 
 
+def _import_litellm():
+    """延迟导入 litellm；未安装时给出可操作的错误提示。"""
+
+    try:
+        import litellm
+    except ImportError as exc:
+        raise FatalLLMError(
+            "未安装 litellm SDK，请执行 pip install litellm 后使用 litellm 供应商"
+        ) from exc
+    return litellm
+
+
+class LiteLLMProvider(LLMProvider):
+    """通过 LiteLLM 统一接入 100+ 模型供应商（含 Ollama 等本地模型）。
+
+    与 DeepSeek/Anthropic 适配器一样，把 Pydantic JSON Schema 放进提示词，
+    再用 Pydantic 做第二次严格校验；失败分类复用同一套重试/致命错误语义。
+    API Key 沿用各供应商约定的环境变量（例如 OPENAI_API_KEY、
+    DEEPSEEK_API_KEY），本地模型无需 Key。
+    """
+
+    def __init__(self, config: LLMConfig) -> None:
+        self.litellm = _import_litellm()
+        self.config = config
+
+    def _completion(self, user_prompt: str, system_prompt: str) -> str:
+        schema = json.dumps(PageAnalysis.model_json_schema(), ensure_ascii=False)
+        full_prompt = f"{user_prompt}\n\n必须只返回符合以下 JSON Schema 的 JSON 对象：\n{schema}"
+        kwargs: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": full_prompt},
+            ],
+            "max_tokens": self.config.max_output_tokens,
+            "timeout": self.config.request_timeout_seconds,
+        }
+        if self.config.base_url:
+            kwargs["api_base"] = self.config.base_url
+        try:
+            response = self.litellm.completion(**kwargs)
+        except Exception as exc:
+            raise _request_error("LiteLLM", exc) from exc
+        try:
+            return response.choices[0].message.content or ""
+        except (AttributeError, IndexError, KeyError) as exc:
+            raise RetryableLLMError(f"LiteLLM 返回了无法解析的响应：{exc}") from exc
+
+    def analyze(self, user_prompt: str) -> PageAnalysis:
+        text = self._completion(user_prompt, SYSTEM_PROMPT)
+        if not text.strip():
+            raise RetryableLLMError("LiteLLM 返回了空 JSON 内容，将由上层重试")
+        try:
+            return PageAnalysis.model_validate(_extract_json_object(text, "LiteLLM"))
+        except Exception as exc:
+            if isinstance(exc, LLMError):
+                raise
+            raise RetryableLLMError(f"LiteLLM 结构化结果校验失败：{exc}") from exc
+
+    def analyze_reputation(self, user_prompt: str) -> SocialReputationAnalysis:
+        schema = json.dumps(
+            SocialReputationAnalysis.model_json_schema(), ensure_ascii=False
+        )
+        full_prompt = (
+            f"{user_prompt}\n\n必须只返回符合以下 JSON Schema 的 JSON 对象：\n{schema}"
+        )
+        kwargs: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": [
+                {"role": "system", "content": REPUTATION_SYSTEM_PROMPT},
+                {"role": "user", "content": full_prompt},
+            ],
+            "max_tokens": min(self.config.max_output_tokens, 12_000),
+            "timeout": self.config.request_timeout_seconds,
+        }
+        if self.config.base_url:
+            kwargs["api_base"] = self.config.base_url
+        try:
+            response = self.litellm.completion(**kwargs)
+        except Exception as exc:
+            raise _request_error("LiteLLM 口碑分析", exc) from exc
+        try:
+            text = response.choices[0].message.content or ""
+        except (AttributeError, IndexError, KeyError) as exc:
+            raise RetryableLLMError(f"LiteLLM 返回了无法解析的响应：{exc}") from exc
+        try:
+            return SocialReputationAnalysis.model_validate(
+                _extract_json_object(text, "LiteLLM")
+            )
+        except Exception as exc:
+            if isinstance(exc, LLMError):
+                raise
+            raise RetryableLLMError(f"LiteLLM 口碑结构校验失败：{exc}") from exc
+
+
 def create_provider(config: LLMConfig) -> LLMProvider:
     """根据 YAML 选择供应商；API Key 始终由环境变量提供。"""
 
@@ -404,6 +499,8 @@ def create_provider(config: LLMConfig) -> LLMProvider:
         return OpenAIProvider(config)
     if config.provider == "deepseek":
         return DeepSeekProvider(config)
+    if config.provider == "litellm":
+        return LiteLLMProvider(config)
     return AnthropicProvider(config)
 
 

@@ -6,12 +6,22 @@ import pytest
 
 from career_radar.crawler import RateLimiter, RobotsDeniedError, RobotsPolicy
 from career_radar.models import CrawlerConfig
+from career_radar.network_policy import PublicTargetPolicy
 
 
 class FakeResponse:
-    def __init__(self, status_code: int, text: str = "") -> None:
+    def __init__(
+        self,
+        status_code: int,
+        text: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self.text = text
+        self.headers = headers or {}
+
+    def close(self) -> None:
+        pass
 
 
 class FakeSession:
@@ -31,11 +41,16 @@ def _config() -> CrawlerConfig:
     )
 
 
+def _public_policy() -> PublicTargetPolicy:
+    return PublicTargetPolicy(lambda _host, _port: ["93.184.216.34"])
+
+
 def test_robots_disallow_is_enforced() -> None:
     policy = RobotsPolicy(
         FakeSession(FakeResponse(200, "User-agent: *\nDisallow: /private")),  # type: ignore[arg-type]
         _config(),
         RateLimiter(0, 0),
+        _public_policy(),
     )
     with pytest.raises(RobotsDeniedError):
         policy.ensure_allowed("https://example.com/private/jobs")
@@ -46,6 +61,7 @@ def test_missing_robots_allows_public_page() -> None:
         FakeSession(FakeResponse(404)),  # type: ignore[arg-type]
         _config(),
         RateLimiter(0, 0),
+        _public_policy(),
     )
     policy.ensure_allowed("https://example.com/careers")
 
@@ -55,7 +71,21 @@ def test_server_error_uses_conservative_policy() -> None:
         FakeSession(FakeResponse(503)),  # type: ignore[arg-type]
         _config(),
         RateLimiter(0, 0),
+        _public_policy(),
     )
     with pytest.raises(RobotsDeniedError):
         policy.ensure_allowed("https://example.com/careers")
 
+
+def test_robots_redirect_to_private_network_is_denied() -> None:
+    policy = RobotsPolicy(
+        FakeSession(
+            FakeResponse(302, headers={"Location": "http://127.0.0.1/robots.txt"})
+        ),  # type: ignore[arg-type]
+        _config(),
+        RateLimiter(0, 0),
+        _public_policy(),
+    )
+
+    with pytest.raises(RobotsDeniedError):
+        policy.ensure_allowed("https://example.com/careers")

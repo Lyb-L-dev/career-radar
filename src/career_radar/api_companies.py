@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .api_validations import safe_public_url
+from .company_import import parse_company_csv
 from .config_editor import mutate_config_blocks
 from .crawler import PageFetcher
 from .discovery import parse_html, ranked_prompt_links
@@ -100,6 +101,15 @@ class CompanyTestPayload(BaseModel):
     careersUrl: str | None = None
 
 
+class CompanyImportPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    csvText: str = Field(min_length=1, max_length=1_000_000)
+
+
+class CompanyImportCommitPayload(CompanyImportPayload):
+    confirmed: bool
+
+
 def create_companies_router(
     repository: WebRepository,
     config_file: Path,
@@ -135,6 +145,46 @@ def create_companies_router(
 
         deleted = mutate_config_blocks(config_file, delete_selected)
         return {"ok": True, "deleted": deleted}
+
+    @router.post("/import/preview")
+    def preview_company_import(payload: CompanyImportPayload) -> dict[str, Any]:
+        existing = {company.name for company in repository.settings.companies}
+        try:
+            result = parse_company_csv(payload.csvText, existing)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        stats = result.stats
+        return {
+            "rows": result.rows,
+            "stats": stats,
+            "canCommit": stats["invalid"] == 0 and stats["valid"] > 0,
+        }
+
+    @router.post("/import/commit")
+    def commit_company_import(payload: CompanyImportCommitPayload) -> dict[str, Any]:
+        if not payload.confirmed:
+            raise HTTPException(422, "提交导入前需要明确确认")
+
+        def append_imported(raw: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
+            companies = list(raw.get("companies") or [])
+            existing = {str(item.get("name", "")) for item in companies}
+            try:
+                result = parse_company_csv(payload.csvText, existing)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            stats = result.stats
+            if stats["invalid"]:
+                raise HTTPException(422, "CSV 中仍有无效行，请重新预览并修正后再导入")
+            if not result.companies:
+                raise HTTPException(409, "没有可导入的新企业")
+            companies.extend(result.companies)
+            return {"companies": companies}, {
+                "imported": len(result.companies),
+                "skipped": stats["duplicate"],
+            }
+
+        summary = mutate_config_blocks(config_file, append_imported)
+        return {"ok": True, **summary}
 
     @router.get("/{identifier}")
     def get_company(identifier: str) -> dict[str, Any]:

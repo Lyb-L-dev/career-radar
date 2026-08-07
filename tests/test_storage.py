@@ -261,7 +261,7 @@ def test_schema_contains_page_visit_and_candidate_state_tables(tmp_path: Path) -
     assert wechat_account_table == ("company_wechat_accounts",)
     assert wechat_scan_table == ("wechat_recruitment_scans",)
     assert wechat_article_table == ("wechat_recruitment_articles",)
-    assert version == 8
+    assert version == 10
 
 
 def test_version_six_candidate_state_is_upgraded_without_losing_rows(
@@ -302,4 +302,4 @@ def test_version_six_candidate_state_is_upgraded_without_losing_rows(
     assert row["note"] == "保留我"
     assert row["recruitment_channel_status"] == "official_site_pending"
     assert row["attribution_keywords_json"] is None
-    assert version == 8
+    assert version == 10

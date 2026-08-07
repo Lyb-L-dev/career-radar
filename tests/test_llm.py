@@ -1,5 +1,6 @@
 """供应商无关分析器的 URL 白名单、长页面切片和结果合并测试。"""
 
+import json
 from types import SimpleNamespace
 
 import openai
@@ -13,6 +14,7 @@ from career_radar.llm import (
     PageAnalyzer,
     RetryableLLMError,
     _request_error,
+    create_provider,
 )
 from career_radar.models import (
     DifficultyLevel,
@@ -433,3 +435,51 @@ def test_deepseek_thinking_extension_can_be_disabled_for_compatible_proxy(
     provider.analyze("测试")
 
     assert "extra_body" not in captured
+
+
+def test_litellm_provider_requires_sdk() -> None:
+    """未安装 litellm 时必须给出明确错误而不是静默失败。"""
+
+    with pytest.raises(FatalLLMError, match="litellm"):
+        create_provider(LLMConfig(provider="litellm", model="deepseek/deepseek-chat"))
+
+
+def test_litellm_provider_parses_structured_output_and_passes_api_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps(
+        {
+            "page_type": "no_jobs",
+            "contains_recruitment_info": False,
+            "jobs": [],
+            "follow_links": [],
+        },
+        ensure_ascii=False,
+    )
+    captured: dict[str, object] = {}
+
+    class FakeCompletion:
+        choices = [
+            SimpleNamespace(message=SimpleNamespace(content=payload)),
+        ]
+
+    fake_litellm = SimpleNamespace(
+        completion=lambda **kwargs: captured.update(kwargs) or FakeCompletion()
+    )
+    monkeypatch.setattr(
+        "career_radar.llm._import_litellm",
+        lambda: fake_litellm,
+    )
+
+    provider = create_provider(
+        LLMConfig(
+            provider="litellm",
+            model="ollama/qwen2.5:7b",
+            base_url="http://127.0.0.1:11434",
+        )
+    )
+    analysis = provider.analyze("这是测试页面")
+
+    assert analysis.page_type == "no_jobs"
+    assert captured["model"] == "ollama/qwen2.5:7b"
+    assert captured["api_base"] == "http://127.0.0.1:11434"

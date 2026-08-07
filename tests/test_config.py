@@ -220,3 +220,59 @@ def test_config_mutations_serialize_the_entire_read_modify_write_cycle(tmp_path:
 
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert [company["name"] for company in raw["companies"]] == ["测试公司"]
+
+
+def test_apprise_requires_at_least_one_url_when_enabled(tmp_path: Path) -> None:
+    raw = yaml.safe_load(_yaml())
+    raw["apprise"] = {"enabled": True, "urls": []}
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="apprise"):
+        load_settings(config_path)
+
+
+def test_apprise_loads_when_configured(tmp_path: Path) -> None:
+    raw = yaml.safe_load(_yaml())
+    raw["apprise"] = {
+        "enabled": True,
+        "urls": ["tgram://bot:token/chat"],
+        "title_prefix": "[Career Radar 测试]",
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+
+    settings = load_settings(config_path)
+
+    assert settings.apprise.enabled is True
+    assert settings.apprise.urls == ["tgram://bot:token/chat"]
+    assert settings.apprise.title_prefix == "[Career Radar 测试]"
+
+
+def test_litellm_provider_is_accepted(tmp_path: Path) -> None:
+    raw = yaml.safe_load(_yaml())
+    raw["llm"] = {
+        "provider": "litellm",
+        "model": "ollama/qwen2.5:7b",
+        "base_url": "http://127.0.0.1:11434",
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+
+    settings = load_settings(config_path)
+
+    assert settings.llm.provider == "litellm"
+    assert settings.llm.base_url == "http://127.0.0.1:11434"
+
+
+def test_company_ats_source_loads_from_yaml(tmp_path: Path) -> None:
+    raw = yaml.safe_load(_yaml())
+    raw["companies"][0]["ats_source"] = {"type": "greenhouse", "tenant": "acme"}
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+
+    settings = load_settings(config_path)
+
+    assert settings.companies[0].ats_source is not None
+    assert settings.companies[0].ats_source.type == "greenhouse"
+    assert settings.companies[0].ats_source.tenant == "acme"

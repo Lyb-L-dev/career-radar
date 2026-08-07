@@ -89,6 +89,45 @@ class RecruitmentChannel(str, Enum):
     OFFICIAL_NOTICE_SOURCE = "official_notice_source"
 
 
+class AtsSourceType(str, Enum):
+    """支持的 ATS 官方公开接口类型。"""
+
+    GREENHOUSE = "greenhouse"
+    LEVER = "lever"
+    ASHBY = "ashby"
+    JSON_FEED = "json_feed"
+
+
+class AtsSourceConfig(BaseModel):
+    """直接通过 ATS 公开接口拉取岗位，替代对招聘页的 HTML 遍历。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    type: AtsSourceType
+    # greenhouse 的 board token、lever 的 company、ashby 的 org 名称。
+    tenant: str | None = None
+    # json_feed 专用：接口 URL 与字段映射。
+    json_url: str | None = None
+    json_items_path: str = "$"
+    json_mapping: dict[str, str] = Field(default_factory=dict)
+    request_timeout_seconds: float = Field(default=30, gt=0, le=300)
+    # 拉取后是否用 LLM 评估届别/能力匹配与难度，保证通知链路不变。
+    evaluate_with_llm: bool = True
+
+    @model_validator(mode="after")
+    def validate_source(self) -> AtsSourceConfig:
+        """不同 ATS 类型要求不同的必填字段。"""
+
+        if self.type in {AtsSourceType.GREENHOUSE, AtsSourceType.LEVER, AtsSourceType.ASHBY}:
+            if not self.tenant or not self.tenant.strip():
+                raise ValueError(f"{self.type.value} ATS 必须填写 tenant")
+        if self.type == AtsSourceType.JSON_FEED:
+            if not self.json_url or not self.json_url.strip():
+                raise ValueError("json_feed 必须填写 json_url")
+        return self
+
+
 class CompanyPriority(str, Enum):
     """公司池推荐优先级；福建本地且有官方荣誉依据的公司可设为高。"""
 
@@ -133,6 +172,7 @@ class CompanyConfig(BaseModel):
 
     name: str = Field(min_length=1)
     url: str = Field(pattern=r"^https?://")
+    ats_source: AtsSourceConfig | None = None
     company_type: CompanyType = CompanyType.PRIVATE
     industry_category: IndustryCategory = IndustryCategory.OTHER
     province: str | None = None
@@ -173,6 +213,8 @@ class AppConfig(BaseModel):
     log_dir: Path = Path("logs")
     daily_run_time: str = Field(default="08:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     report_retention_days: int = Field(default=90, ge=7, le=3650)
+    # 同一公司“换标题重发”的岗位在多少天内合并为一个实体；0 表示关闭。
+    semantic_duplicate_window_days: int = Field(default=90, ge=0, le=730)
     output_match_levels: list[MatchLevel] = Field(
         default_factory=lambda: list(MatchLevel)
     )
@@ -239,6 +281,7 @@ class CrawlerConfig(BaseModel):
     # 同一路径只允许少量不同查询参数组合进入队列，避免筛选器组合指数扩散。
     max_query_variants_per_path: int = Field(default=3, ge=1, le=20)
     max_links_in_prompt: int = Field(default=500, ge=10, le=5000)
+    max_llm_pages_per_run: int = Field(default=100, ge=1, le=5000)
     max_download_bytes: int = Field(default=10_000_000, ge=100_000)
     min_static_text_chars: int = Field(default=800, ge=0)
     user_agent: str = Field(min_length=10)
@@ -257,7 +300,7 @@ class LLMConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["openai", "anthropic", "deepseek"] = "openai"
+    provider: Literal["openai", "anthropic", "deepseek", "litellm"] = "openai"
     model: str = Field(min_length=1)
     base_url: str | None = None
     request_timeout_seconds: float = Field(default=120, gt=0)
@@ -304,6 +347,25 @@ class SMTPConfig(BaseModel):
             self.host and self.username and self.from_address and self.to_addresses
         ):
             raise ValueError("启用 SMTP 后必须填写 host/username/from_address/to_addresses")
+        return self
+
+
+class AppriseConfig(BaseModel):
+    """基于 Apprise 的多渠道推送设置，支持 Telegram、企业微信、钉钉、ntfy 等。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    urls: list[str] = Field(default_factory=list)
+    title_prefix: str = "[Career Radar]"
+    jd_summary_chars: int = Field(default=500, ge=100, le=5000)
+
+    @model_validator(mode="after")
+    def validate_urls(self) -> AppriseConfig:
+        """启用推送后至少需要一个 Apprise URL（例如 tgram://bot:token/chat）。"""
+
+        if self.enabled and not self.urls:
+            raise ValueError("启用 apprise 推送后必须至少填写一个 urls 条目")
         return self
 
 
@@ -371,6 +433,7 @@ class Settings(BaseModel):
     crawler: CrawlerConfig
     llm: LLMConfig
     smtp: SMTPConfig = Field(default_factory=SMTPConfig)
+    apprise: AppriseConfig = Field(default_factory=AppriseConfig)
     reputation: ReputationConfig = Field(default_factory=ReputationConfig)
     wechat_recruitment: WechatRecruitmentConfig = Field(
         default_factory=WechatRecruitmentConfig
@@ -537,4 +600,5 @@ class RunResult(BaseModel):
     report_path: str | None = None
     csv_path: str | None = None
     email_sent: bool = False
+    apprise_sent: bool = False
     errors: list[str] = Field(default_factory=list)

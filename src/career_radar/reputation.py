@@ -28,6 +28,8 @@ import yaml
 
 from .llm import LLMError, LLMProvider, create_provider
 from .models import ReputationConfig, SocialReputationAnalysis
+from .public_errors import public_error_message
+from .task_coordinator import TaskCoordinator, TaskCoordinatorClosed
 from .web_repository import WebRepository
 
 LOGGER = logging.getLogger(__name__)
@@ -531,11 +533,17 @@ class ReputationAnalyzer:
 class ReputationManager:
     """串行后台执行口碑调查，避免四个平台同时抢占同一 Chrome Profile。"""
 
-    def __init__(self, repository: WebRepository) -> None:
+    def __init__(
+        self,
+        repository: WebRepository,
+        coordinator: TaskCoordinator | None = None,
+    ) -> None:
         self.repository = repository
+        self.coordinator = coordinator or TaskCoordinator()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reputation-scan")
         self._lock = threading.Lock()
         self._active_scan_id: str | None = None
+        self._closed = False
         self._recover_orphaned_scans()
 
     def _recover_orphaned_scans(self) -> None:
@@ -561,7 +569,7 @@ class ReputationManager:
             return {
                 "enabled": True,
                 "available": False,
-                "message": str(exc),
+                "message": public_error_message(exc, context="口碑调查连接检查"),
                 "platforms": [
                     {"key": key, "label": PLATFORM_LABELS[key]}
                     for key in settings.reputation.platforms
@@ -570,6 +578,8 @@ class ReputationManager:
 
     def create(self, job_id: str) -> dict[str, Any]:
         with self._lock:
+            if self._closed:
+                raise ReputationConflictError("API 服务正在关闭，暂不接受新的口碑调查")
             if self._active_scan_id is not None:
                 raise ReputationConflictError(
                     f"口碑调查 {self._active_scan_id} 正在运行，请等待完成"
@@ -617,6 +627,23 @@ class ReputationManager:
             return payload
 
     def _execute(self, payload: dict[str, Any]) -> None:
+        try:
+            with self.coordinator.acquire(
+                "reputation",
+                payload["id"],
+                {"opencli", "deepseek"},
+            ):
+                self._execute_reserved(payload)
+        except TaskCoordinatorClosed:
+            payload["status"] = "interrupted"
+            payload["finishedAt"] = self._now()
+            payload["updatedAt"] = payload["finishedAt"]
+            payload["errors"].append("API 服务正在关闭，排队中的口碑调查没有启动。")
+            self.repository.save_reputation_scan(payload)
+            with self._lock:
+                self._active_scan_id = None
+
+    def _execute_reserved(self, payload: dict[str, Any]) -> None:
         settings = self.repository.settings
         started = time.perf_counter()
         try:
@@ -650,7 +677,11 @@ class ReputationManager:
                             break
                 except (OpenCLIError, subprocess.SubprocessError) as exc:
                     platform_state["status"] = "failed"
-                    platform_state["error"] = _safe_text(exc, 500)
+                    platform_state["error"] = public_error_message(
+                        exc,
+                        context=f"{platform_state['label']}调查",
+                        limit=500,
+                    )
                     payload["errors"].append(
                         f"{platform_state['label']}：{platform_state['error']}"
                     )
@@ -672,7 +703,13 @@ class ReputationManager:
                     )
                     payload["analysis"] = analysis.model_dump(mode="json")
                 except (LLMError, ValueError) as exc:
-                    payload["errors"].append(f"DeepSeek 分析：{_safe_text(exc, 500)}")
+                    payload["errors"].append(
+                        public_error_message(
+                            exc,
+                            context="DeepSeek 口碑分析",
+                            limit=500,
+                        )
+                    )
             else:
                 payload["errors"].append("四个平台没有返回可用于分析的公开评价。")
 
@@ -685,7 +722,9 @@ class ReputationManager:
         except Exception as exc:
             LOGGER.exception("口碑调查失败：%s", exc)
             payload["status"] = "failed"
-            payload["errors"].append(_safe_text(exc, 800))
+            payload["errors"].append(
+                public_error_message(exc, context="口碑调查", limit=800)
+            )
         finally:
             payload["durationMs"] = int((time.perf_counter() - started) * 1000)
             payload["finishedAt"] = self._now()
@@ -702,3 +741,10 @@ class ReputationManager:
         if payload and payload.get("status") in _TERMINAL_STATUSES:
             return payload
         return payload
+
+    def shutdown(self, *, wait: bool = True) -> None:
+        """Stop accepting new investigations and close the worker."""
+
+        with self._lock:
+            self._closed = True
+        self._executor.shutdown(wait=wait, cancel_futures=True)

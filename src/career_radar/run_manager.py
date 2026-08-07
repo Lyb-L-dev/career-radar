@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 
 from .llm import create_provider
 from .pipeline import MonitoringCancelled, MonitorService
+from .public_errors import public_error_message, redact_public_text
+from .task_coordinator import TaskCoordinator, TaskCoordinatorClosed
 from .web_repository import WebRepository, company_id
 
 LOGGER = logging.getLogger(__name__)
@@ -49,10 +51,16 @@ class RunConflictError(RuntimeError):
 class RunManager:
     """单进程单任务执行器，防止浏览器重复点击导致并发抓取和 SQLite 竞争。"""
 
-    def __init__(self, repository: WebRepository) -> None:
+    def __init__(
+        self,
+        repository: WebRepository,
+        coordinator: TaskCoordinator | None = None,
+    ) -> None:
         self.repository = repository
+        self.coordinator = coordinator or TaskCoordinator()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="career-radar-run")
         self._lock = threading.Lock()
+        self._closed = False
         self._active_run_id: str | None = None
         self._active_payload: dict[str, Any] | None = None
         self._cancel_event: threading.Event | None = None
@@ -85,6 +93,8 @@ class RunManager:
         selected_company_type: str | None = None,
     ) -> dict[str, Any]:
         with self._lock:
+            if self._closed:
+                raise RunConflictError("API 服务正在关闭，暂不接受新的扫描任务")
             if self._active_run_id is not None:
                 raise RunConflictError(f"扫描任务 {self._active_run_id} 正在运行，请勿重复创建")
 
@@ -187,6 +197,48 @@ class RunManager:
         send_email: bool,
         cancel_event: threading.Event,
     ) -> None:
+        try:
+            with self.coordinator.acquire(
+                "website_scan",
+                payload["id"],
+                {"browser", "deepseek"},
+            ):
+                self._execute_reserved(
+                    payload,
+                    company_names,
+                    send_email,
+                    cancel_event,
+                )
+        except TaskCoordinatorClosed:
+            finished = datetime.now().astimezone().isoformat(timespec="seconds")
+            payload.update(
+                {
+                    "status": "interrupted",
+                    "finishedAt": finished,
+                    "canStop": False,
+                }
+            )
+            payload["logs"].append(
+                {
+                    "time": finished,
+                    "level": "WARN",
+                    "message": "API 服务正在关闭，排队中的扫描没有启动。",
+                }
+            )
+            with self._lock:
+                self.repository.save_run(payload)
+                if self._active_run_id == payload["id"]:
+                    self._active_run_id = None
+                    self._active_payload = None
+                    self._cancel_event = None
+
+    def _execute_reserved(
+        self,
+        payload: dict[str, Any],
+        company_names: set[str],
+        send_email: bool,
+        cancel_event: threading.Event,
+    ) -> None:
         started = time.perf_counter()
         timezone = ZoneInfo(self.repository.settings.app.timezone)
         with self._lock:
@@ -247,7 +299,10 @@ class RunManager:
                 else:
                     item["failedPages"] = int(item.get("failedPages") or 0) + 1
                     level = "ERROR"
-                    message = event.get("error") or f"页面扫描失败：{item['currentPage']}"
+                    message = redact_public_text(
+                        event.get("error") or f"页面扫描失败：{item['currentPage']}",
+                        800,
+                    )
                 self.repository.save_page_visit(payload["id"], name, event)
                 payload["logs"].append(
                     {
@@ -275,14 +330,16 @@ class RunManager:
                     "updatedJobs": company_updated,
                     "steps": _steps(
                         "failed" if failed else "success",
-                        result.errors[0]
+                        redact_public_text(result.errors[0], 800)
                         if failed
                         else "页面抓取、LLM 提取和 SQLite 入库均已完成",
                     ),
                 }
             )
             if failed:
-                item["error"] = "\n".join(result.errors)
+                item["error"] = "\n".join(
+                    redact_public_text(error, 800) for error in result.errors
+                )
                 payload["failedCount"] += 1
             else:
                 payload["successCount"] += 1
@@ -380,6 +437,7 @@ class RunManager:
             )
         except Exception as exc:
             finished = datetime.now(timezone).isoformat(timespec="seconds")
+            public_error = public_error_message(exc, context="扫描任务")
             payload.update(
                 {
                     "status": "failed",
@@ -393,7 +451,7 @@ class RunManager:
                 {
                     "time": finished,
                     "level": "ERROR",
-                    "message": f"扫描任务失败：{type(exc).__name__}: {exc}",
+                    "message": public_error,
                 }
             )
             LOGGER.exception("Web 扫描任务失败：%s", payload["id"])
@@ -430,3 +488,12 @@ class RunManager:
                 }
             )
             self.repository.save_run(self._active_payload)
+
+    def shutdown(self, *, wait: bool = True) -> None:
+        """Stop accepting work and cooperatively stop the active scan."""
+
+        with self._lock:
+            self._closed = True
+            if self._cancel_event is not None:
+                self._cancel_event.set()
+        self._executor.shutdown(wait=wait, cancel_futures=True)

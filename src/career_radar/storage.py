@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .embeddings import jaccard_similarity, job_embedding_text, pack_vector, unpack_vector
 from .job_merge import (
     is_same_job,
     job_urls,
@@ -17,7 +19,8 @@ from .job_merge import (
 )
 from .models import JobPosting, StoredJobEvent
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
+_SEMANTIC_DUPLICATE_THRESHOLD = 0.6
 
 
 def _normalized(value: str | None) -> str:
@@ -28,6 +31,36 @@ def _normalized(value: str | None) -> str:
 
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _semantic_text(job: JobPosting) -> str:
+    """用于同义岗位判定的文本：标题 + 地点 + JD + 任职要求。"""
+
+    return " ".join(
+        part
+        for part in (
+            job.title,
+            job.location or "",
+            job.description or "",
+            job.requirements or "",
+        )
+        if part
+    )
+
+
+def _within_days(timestamp: str | None, days: int) -> bool:
+    """判断时间戳是否在最近 N 天内（兼容带/不带时区的 ISO 文本）。"""
+
+    if not timestamp or days <= 0:
+        return False
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    return parsed >= cutoff
 
 
 def compute_job_hashes(job: JobPosting) -> tuple[str, str, str, str]:
@@ -74,8 +107,14 @@ def compute_job_hashes(job: JobPosting) -> tuple[str, str, str, str]:
 class JobStorage:
     """轻量 SQLite 仓库；每个实例按操作短暂打开连接，适合每日定时任务。"""
 
-    def __init__(self, database_path: Path) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        *,
+        semantic_duplicate_window_days: int = 0,
+    ) -> None:
         self.database_path = database_path
+        self.semantic_duplicate_window_days = semantic_duplicate_window_days
 
     def _connect(self) -> sqlite3.Connection:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,6 +168,14 @@ class JobStorage:
                 CREATE INDEX IF NOT EXISTS idx_jobs_fingerprint
                     ON jobs(fingerprint);
 
+                CREATE TABLE IF NOT EXISTS job_embeddings (
+                    entity_key TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    dimension INTEGER NOT NULL,
+                    vector_blob BLOB NOT NULL,
+                    computed_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS job_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     entity_key TEXT NOT NULL,
@@ -147,6 +194,7 @@ class JobStorage:
                     is_favorite INTEGER NOT NULL DEFAULT 0,
                     is_applied INTEGER NOT NULL DEFAULT 0,
                     not_interested INTEGER NOT NULL DEFAULT 0,
+                    ignored_content_hash TEXT,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(entity_key) REFERENCES jobs(entity_key) ON DELETE CASCADE
                 );
@@ -180,6 +228,7 @@ class JobStorage:
                     http_status INTEGER,
                     content_length INTEGER NOT NULL DEFAULT 0,
                     llm_extracted INTEGER NOT NULL DEFAULT 0,
+                    cache_status TEXT,
                     jobs_found INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL,
                     error TEXT,
@@ -189,6 +238,21 @@ class JobStorage:
                     ON web_page_visits(company_id, fetched_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_web_page_visits_run
                     ON web_page_visits(run_id, id);
+
+                CREATE TABLE IF NOT EXISTS page_analysis_cache (
+                    company_name TEXT NOT NULL,
+                    final_url TEXT NOT NULL,
+                    context_hash TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    etag TEXT,
+                    last_modified TEXT,
+                    document_json TEXT NOT NULL,
+                    analysis_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(company_name, final_url)
+                );
+                CREATE INDEX IF NOT EXISTS idx_page_analysis_cache_updated
+                    ON page_analysis_cache(updated_at DESC);
 
                 CREATE TABLE IF NOT EXISTS company_candidate_state (
                     candidate_id TEXT PRIMARY KEY,
@@ -436,7 +500,90 @@ class JobStorage:
                         f"ALTER TABLE company_candidate_state "
                         f"ADD COLUMN {column} {declaration}"
                     )
+            page_visit_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(web_page_visits)"
+                ).fetchall()
+            }
+            if "cache_status" not in page_visit_columns:
+                connection.execute(
+                    "ALTER TABLE web_page_visits ADD COLUMN cache_status TEXT"
+                )
+            job_state_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(web_job_state)"
+                ).fetchall()
+            }
+            if "ignored_content_hash" not in job_state_columns:
+                connection.execute(
+                    "ALTER TABLE web_job_state ADD COLUMN ignored_content_hash TEXT"
+                )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    def get_page_analysis_cache(
+        self,
+        company_name: str,
+        url: str,
+    ) -> dict[str, str | None] | None:
+        """Load the last reusable document/analysis snapshot for one company URL."""
+
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT context_hash, content_hash, etag, last_modified,
+                       document_json, analysis_json, updated_at
+                FROM page_analysis_cache
+                WHERE company_name = ? AND final_url = ?
+                """,
+                (company_name, url),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def save_page_analysis_cache(
+        self,
+        *,
+        company_name: str,
+        url: str,
+        context_hash: str,
+        content_hash: str,
+        etag: str | None,
+        last_modified: str | None,
+        document: dict[str, object],
+        analysis: dict[str, object],
+        updated_at: str,
+    ) -> None:
+        """Atomically replace a reusable page analysis after successful validation."""
+
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO page_analysis_cache(
+                    company_name, final_url, context_hash, content_hash,
+                    etag, last_modified, document_json, analysis_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(company_name, final_url) DO UPDATE SET
+                    context_hash = excluded.context_hash,
+                    content_hash = excluded.content_hash,
+                    etag = excluded.etag,
+                    last_modified = excluded.last_modified,
+                    document_json = excluded.document_json,
+                    analysis_json = excluded.analysis_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    company_name,
+                    url,
+                    context_hash,
+                    content_hash,
+                    etag,
+                    last_modified,
+                    json.dumps(document, ensure_ascii=False),
+                    json.dumps(analysis, ensure_ascii=False),
+                    updated_at,
+                ),
+            )
 
     def _identity_matches(
         self,
@@ -465,6 +612,57 @@ class JobStorage:
                 matches.append((row, previous))
         return matches
 
+    def _semantic_identity_matches(
+        self,
+        connection: sqlite3.Connection,
+        incoming: JobPosting,
+        window_days: int,
+    ) -> list[tuple[sqlite3.Row, JobPosting, float]]:
+        """同公司、同城市、最近窗口内文本高度相似的岗位，视为同义重发。
+
+        只在精确身份匹配（同公司同标题同 URL）失败后使用；阈值经过真实样例
+        校准（同岗位变体约 0.68~0.87，不同岗位即使共享福利样板也低于 0.05），
+        地点缺失时提高阈值，避免把不同岗位误合并。
+        """
+
+        if window_days <= 0:
+            return []
+        rows = connection.execute(
+            """
+            SELECT entity_key, payload_json, first_seen_at, last_seen_at
+            FROM jobs WHERE company = ?
+            ORDER BY last_seen_at DESC
+            """,
+            (incoming.company,),
+        ).fetchall()
+        incoming_text = _semantic_text(incoming)
+        matches: list[tuple[sqlite3.Row, JobPosting, float]] = []
+        for row in rows:
+            previous = JobPosting.model_validate_json(row["payload_json"])
+            if is_same_job(
+                incoming,
+                previous,
+                allow_missing_location=True,
+                require_shared_url=True,
+            ):
+                continue
+            if not _within_days(row["last_seen_at"], window_days):
+                continue
+            if (
+                incoming.location
+                and previous.location
+                and incoming.location.casefold() != previous.location.casefold()
+            ):
+                continue
+            score = jaccard_similarity(incoming_text, _semantic_text(previous))
+            threshold = _SEMANTIC_DUPLICATE_THRESHOLD
+            if not incoming.location or not previous.location:
+                threshold = 0.75
+            if score >= threshold:
+                matches.append((row, previous, score))
+        matches.sort(key=lambda item: item[2], reverse=True)
+        return matches
+
     def _merge_duplicate_state(
         self,
         connection: sqlite3.Connection,
@@ -476,7 +674,8 @@ class JobStorage:
 
         rows = connection.execute(
             """
-            SELECT entity_key, is_favorite, is_applied, not_interested
+            SELECT entity_key, is_favorite, is_applied, not_interested,
+                   ignored_content_hash
             FROM web_job_state WHERE entity_key IN (?, ?)
             """,
             (canonical_key, duplicate_key),
@@ -485,18 +684,43 @@ class JobStorage:
             favorite = max(row["is_favorite"] for row in rows)
             applied = max(row["is_applied"] for row in rows)
             not_interested = max(row["not_interested"] for row in rows)
+            ignored_content_hash = next(
+                (
+                    row["ignored_content_hash"]
+                    for row in rows
+                    if row["entity_key"] == canonical_key
+                    and row["ignored_content_hash"]
+                ),
+                next(
+                    (
+                        row["ignored_content_hash"]
+                        for row in rows
+                        if row["ignored_content_hash"]
+                    ),
+                    None,
+                ),
+            )
             connection.execute(
                 """
                 INSERT INTO web_job_state(
-                    entity_key, is_favorite, is_applied, not_interested, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
+                    entity_key, is_favorite, is_applied, not_interested,
+                    ignored_content_hash, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(entity_key) DO UPDATE SET
                     is_favorite = excluded.is_favorite,
                     is_applied = excluded.is_applied,
                     not_interested = excluded.not_interested,
+                    ignored_content_hash = excluded.ignored_content_hash,
                     updated_at = excluded.updated_at
                 """,
-                (canonical_key, favorite, applied, not_interested, updated_at),
+                (
+                    canonical_key,
+                    favorite,
+                    applied,
+                    not_interested,
+                    ignored_content_hash,
+                    updated_at,
+                ),
             )
         connection.execute(
             "UPDATE job_history SET entity_key = ? WHERE entity_key = ?",
@@ -523,7 +747,30 @@ class JobStorage:
         proposed_key = compute_job_hashes(incoming)[0]
         matches = self._identity_matches(connection, incoming)
         if not matches:
-            return proposed_key, incoming
+            semantic = self._semantic_identity_matches(
+                connection,
+                incoming,
+                self.semantic_duplicate_window_days,
+            )
+            if not semantic:
+                return proposed_key, incoming
+            canonical_row = semantic[0][0]
+            canonical_key = canonical_row["entity_key"]
+            richest_previous = max(
+                (previous for _row, previous, _score in semantic),
+                key=lambda item: len(item.description) + len(item.requirements or ""),
+            )
+            job = preserve_richer_previous_content(incoming, richest_previous)
+            for row, _previous, _score in semantic[1:]:
+                duplicate_key = row["entity_key"]
+                if duplicate_key != canonical_key:
+                    self._merge_duplicate_state(
+                        connection,
+                        canonical_key,
+                        duplicate_key,
+                        detected_at,
+                    )
+            return canonical_key, job
 
         canonical_row = matches[0][0]
         canonical_key = canonical_row["entity_key"]
@@ -664,3 +911,135 @@ class JobStorage:
                 "SELECT payload_json FROM jobs ORDER BY company, title"
             ).fetchall()
         return [JobPosting.model_validate_json(row["payload_json"]) for row in rows]
+
+    def ensure_job_embeddings(
+        self,
+        provider: str,
+        dimension: int,
+        embed: Callable[[str], list[float]],
+    ) -> int:
+        """为缺少向量的岗位补齐嵌入向量；返回本次新增条数。"""
+
+        self.initialize()
+        computed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        added = 0
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT entity_key, payload_json FROM jobs"
+            ).fetchall()
+            for row in rows:
+                exists = connection.execute(
+                    "SELECT 1 FROM job_embeddings WHERE entity_key = ?",
+                    (row["entity_key"],),
+                ).fetchone()
+                if exists:
+                    continue
+                job = JobPosting.model_validate_json(row["payload_json"])
+                vector = embed(job_embedding_text(job))
+                connection.execute(
+                    """
+                    INSERT INTO job_embeddings
+                        (entity_key, provider, dimension, vector_blob, computed_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["entity_key"],
+                        provider,
+                        dimension,
+                        pack_vector(vector),
+                        computed_at,
+                    ),
+                )
+                added += 1
+        return added
+
+    def load_job_embeddings(self) -> dict[str, list[float]]:
+        """读取全部岗位向量（entity_key -> vector）。"""
+
+        self.initialize()
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT entity_key, vector_blob FROM job_embeddings"
+            ).fetchall()
+        return {
+            row["entity_key"]: unpack_vector(row["vector_blob"]) for row in rows
+        }
+
+    def reset_job_embeddings(self) -> int:
+        """清空向量表（例如重建索引时），返回清空的条数。"""
+
+        self.initialize()
+        with self.transaction() as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM job_embeddings"
+            ).fetchone()[0]
+            connection.execute("DELETE FROM job_embeddings")
+        return count
+
+    def merge_duplicate_jobs(
+        self,
+        window_days: int,
+    ) -> list[tuple[str, str, float]]:
+        """合并数据库中已有的同义重复岗位，返回 (保留主键, 被合并主键, 相似度)。"""
+
+        self.initialize()
+        detected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        merged: list[tuple[str, str, float]] = []
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT entity_key, company, payload_json, first_seen_at, last_seen_at
+                FROM jobs ORDER BY company, first_seen_at ASC
+                """
+            ).fetchall()
+            by_company: dict[str, list[tuple[sqlite3.Row, JobPosting]]] = {}
+            for row in rows:
+                by_company.setdefault(row["company"], []).append(
+                    (row, JobPosting.model_validate_json(row["payload_json"]))
+                )
+            removed: set[str] = set()
+            for items in by_company.values():
+                for index in range(len(items)):
+                    for other_index in range(index + 1, len(items)):
+                        row_a, job_a = items[index]
+                        row_b, job_b = items[other_index]
+                        key_a, key_b = row_a["entity_key"], row_b["entity_key"]
+                        if key_a in removed or key_b in removed:
+                            continue
+                        if (
+                            job_a.location
+                            and job_b.location
+                            and job_a.location.casefold() != job_b.location.casefold()
+                        ):
+                            continue
+                        score = jaccard_similarity(
+                            _semantic_text(job_a),
+                            _semantic_text(job_b),
+                        )
+                        threshold = _SEMANTIC_DUPLICATE_THRESHOLD
+                        if not job_a.location or not job_b.location:
+                            threshold = 0.75
+                        if score < threshold:
+                            continue
+                        if row_a["first_seen_at"] <= row_b["first_seen_at"]:
+                            canonical_key, duplicate_key = key_a, key_b
+                        else:
+                            canonical_key, duplicate_key = key_b, key_a
+                        canonical_seen = (
+                            row_a["last_seen_at"]
+                            if canonical_key == key_a
+                            else row_b["last_seen_at"]
+                        )
+                        if not _within_days(canonical_seen, window_days):
+                            continue
+                        self._merge_duplicate_state(
+                            connection,
+                            canonical_key,
+                            duplicate_key,
+                            detected_at,
+                        )
+                        removed.add(duplicate_key)
+                        merged.append(
+                            (canonical_key, duplicate_key, round(score, 3))
+                        )
+        return merged

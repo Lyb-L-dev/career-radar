@@ -2,24 +2,16 @@
 
 from __future__ import annotations
 
-import ipaddress
-from urllib.parse import urlsplit
+from .network_policy import PublicTargetPolicy
+
+_PUBLIC_TARGET_POLICY = PublicTargetPolicy()
 
 
 def safe_public_url(value: str) -> str:
-    """Reject local/private targets so Web forms cannot become an SSRF proxy."""
+    """Reject invalid/literal-private targets before they enter configuration.
 
-    value = value.strip()
-    parts = urlsplit(value)
-    if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username:
-        raise ValueError("必须填写不含账号密码的公开 HTTP(S) URL")
-    hostname = parts.hostname.casefold()
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".local"):
-        raise ValueError("不允许监控本机或 .local 地址")
-    try:
-        address = ipaddress.ip_address(hostname)
-    except ValueError:
-        return value
-    if not address.is_global:
-        raise ValueError("不允许监控私网、回环、链路本地或保留 IP")
-    return value
+    DNS answers are revalidated immediately before every outbound crawler request,
+    where the result cannot become stale while a task waits in the queue.
+    """
+
+    return _PUBLIC_TARGET_POLICY.validate(value, resolve=False).url
