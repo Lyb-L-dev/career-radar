@@ -1,8 +1,9 @@
-  import { apiRequest, delay, copy, USE_MOCK } from './config'
-  import { jobs } from '@/mocks/jobs'
-  import type { Job, JobFilter, SimilarJob } from '@/types'
+import { apiRequest, delay, copy, USE_MOCK } from './config'
+import { jobs } from '@/mocks/jobs'
+import { jobMatchesKeyword } from '@/lib/jobSearch'
+import type { Job, JobFilter, SimilarJob } from '@/types'
 
-function matchFilter(job: Job, filter: JobFilter): boolean {
+export function matchFilter(job: Job, filter: JobFilter): boolean {
   if (filter.tab === 'notice' && job.type !== 'notice') return false
   if (filter.tab === 'new' && job.status !== 'new') return false
   if (filter.tab === 'updated' && job.status !== 'updated') return false
@@ -12,9 +13,7 @@ function matchFilter(job: Job, filter: JobFilter): boolean {
     if (!(good && job.status !== 'closed' && !job.notInterested)) return false
   }
   if (filter.keyword) {
-    const kw = filter.keyword.toLowerCase()
-    const hay = [job.title, job.companyName, job.city, job.jdText, ...job.tags].join(' ').toLowerCase()
-    if (!hay.includes(kw)) return false
+    if (!jobMatchesKeyword(job, filter.keyword)) return false
   }
   if (filter.companyId && job.companyId !== filter.companyId) return false
   if (filter.companyType && job.companyType !== filter.companyType) return false

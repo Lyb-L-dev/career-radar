@@ -3,6 +3,7 @@ import { jobs } from '@/mocks/jobs'
 import { companies } from '@/mocks/companies'
 import { reports } from '@/mocks/reports'
 import { runs } from '@/mocks/runs'
+import { companyMatchesKeyword, jobMatchesKeyword } from '@/lib/jobSearch'
 import type { SearchResults } from '@/types'
 
 export async function globalSearch(keyword: string, limit = 20): Promise<SearchResults> {
@@ -13,13 +14,11 @@ export async function globalSearch(keyword: string, limit = 20): Promise<SearchR
   }
 
   const matchedJobs = jobs
-    .filter((j) =>
-      [j.title, j.companyName, j.city, j.jdText, ...j.tags].join(' ').toLowerCase().includes(kw),
-    )
+    .filter((j) => jobMatchesKeyword(j, kw))
     .slice(0, limit)
 
   const matchedCompanies = companies
-    .filter((c) => [c.name, c.shortName, c.industry, c.website].join(' ').toLowerCase().includes(kw))
+    .filter((c) => companyMatchesKeyword(c, kw))
     .slice(0, limit)
 
   const matchedReports = reports

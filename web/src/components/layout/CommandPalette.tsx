@@ -14,6 +14,7 @@ import { Briefcase, Building2, FileText, Activity, UserRound, Settings, LayoutDa
 import { useRuns, useReports } from '@/hooks/useData'
 import { useCompanies } from '@/hooks/useCompanies'
 import { useJobs } from '@/hooks/useJobs'
+import { companyMatchesKeyword, jobMatchesKeyword } from '@/lib/jobSearch'
 
 const PAGES = [
   { label: '总览', to: '/', icon: LayoutDashboard },
@@ -54,7 +55,7 @@ export function CommandPalette() {
     () =>
       kw
         ? (jobs ?? [])
-            .filter((j) => [j.title, j.companyName, j.city, ...j.tags].join(' ').toLowerCase().includes(kw))
+            .filter((j) => jobMatchesKeyword(j, kw))
             .slice(0, 5)
         : (jobs ?? []).slice(0, 3),
     [jobs, kw],
@@ -63,7 +64,7 @@ export function CommandPalette() {
     () =>
       kw
         ? (companies ?? [])
-            .filter((c) => [c.name, c.shortName, c.industry].join(' ').toLowerCase().includes(kw))
+            .filter((c) => companyMatchesKeyword(c, kw))
             .slice(0, 5)
         : (companies ?? []).slice(0, 3),
     [companies, kw],
