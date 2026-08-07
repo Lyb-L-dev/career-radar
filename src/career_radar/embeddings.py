@@ -17,6 +17,7 @@ from .models import JobPosting
 
 VECTOR_DIMENSION = 1024
 PROVIDER_NAME = "char-hash-v1"
+SIMILAR_JOB_THRESHOLD = 0.12
 _MAX_EMBEDDING_CHARS = 4000
 _TOKEN_RUN = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]+")
 _LATIN_RUN = re.compile(r"[a-z0-9]+")

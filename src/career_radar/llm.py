@@ -31,6 +31,8 @@ from .url_utils import canonicalize_url, resolve_http_url
 LOGGER = logging.getLogger(__name__)
 
 _EMAIL_PATTERN = re.compile(r"^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.I)
+_DENSE_JOB_CHUNK_CHARS = 3_500
+_DENSE_JOB_CHUNK_OVERLAP = 800
 
 REPUTATION_SYSTEM_PROMPT = """你是谨慎的求职背调分析员。输入是社交平台公开搜索结果，不是经核实的事实。
 只能归纳输入中明确出现的内容；不得根据公司名气、学校背景或单一帖子臆测。
@@ -630,8 +632,8 @@ class PageAnalyzer:
             # 部分央企 ATS 在一个页面直接展开十余条完整 JD。整页一次返回会生成
             # 很大的 JSON，DeepSeek 容易截断或退化为空列表；拆成较小重叠切片后
             # 再按岗位名/地点合并，既保留全文，也显著提高结构化输出稳定性。
-            chunk_size = min(chunk_size, 3_500)
-            chunk_overlap = min(chunk_overlap, 800)
+            chunk_size = min(chunk_size, _DENSE_JOB_CHUNK_CHARS)
+            chunk_overlap = min(chunk_overlap, _DENSE_JOB_CHUNK_OVERLAP)
             LOGGER.info(
                 "检测到同页密集岗位（%s 个字段标记），按 %s 字符切片分析",
                 dense_job_markers,

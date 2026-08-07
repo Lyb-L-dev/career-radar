@@ -7,6 +7,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,6 +22,72 @@ from .models import JobPosting, StoredJobEvent
 
 SCHEMA_VERSION = 10
 _SEMANTIC_DUPLICATE_THRESHOLD = 0.6
+
+
+@dataclass(frozen=True)
+class Migration:
+    """一次可独立验证的数据库迁移。"""
+
+    version: int
+    description: str
+    apply: Callable[[sqlite3.Connection], None]
+
+
+MIGRATIONS: list[Migration] = []
+
+
+def _migration(version: int, description: str):
+    """注册有序迁移；版本必须递增且不重复，初始化时按序应用。"""
+
+    def decorator(
+        fn: Callable[[sqlite3.Connection], None],
+    ) -> Callable[[sqlite3.Connection], None]:
+        MIGRATIONS.append(Migration(version, description, fn))
+        MIGRATIONS.sort(key=lambda item: item.version)
+        return fn
+
+    return decorator
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    declaration: str,
+) -> None:
+    """为历史表补列；列已存在时跳过，便于迁移幂等重跑。"""
+
+    existing = {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in existing:
+        connection.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+        )
+
+
+@_migration(7, "company_candidate_state 增加渠道状态与集团归属列")
+def _migration_candidate_columns(connection: sqlite3.Connection) -> None:
+    for column, declaration in {
+        "recruitment_channel_status": (
+            "TEXT NOT NULL DEFAULT 'official_site_pending'"
+        ),
+        "parent_company": "TEXT",
+        "group_recruitment_url": "TEXT",
+        "attribution_keywords_json": "TEXT",
+    }.items():
+        _ensure_column(connection, "company_candidate_state", column, declaration)
+
+
+@_migration(8, "web_page_visits 增加 cache_status")
+def _migration_page_visit_cache_status(connection: sqlite3.Connection) -> None:
+    _ensure_column(connection, "web_page_visits", "cache_status", "TEXT")
+
+
+@_migration(9, "web_job_state 增加 ignored_content_hash")
+def _migration_job_state_ignored_hash(connection: sqlite3.Connection) -> None:
+    _ensure_column(connection, "web_job_state", "ignored_content_hash", "TEXT")
 
 
 def _normalized(value: str | None) -> str:
@@ -480,46 +547,16 @@ class JobStorage:
                     ON application_artifacts(application_id, created_at DESC);
                 """
             )
-            candidate_columns = {
-                row["name"]
-                for row in connection.execute(
-                    "PRAGMA table_info(company_candidate_state)"
-                ).fetchall()
-            }
-            candidate_migrations = {
-                "recruitment_channel_status": (
-                    "TEXT NOT NULL DEFAULT 'official_site_pending'"
-                ),
-                "parent_company": "TEXT",
-                "group_recruitment_url": "TEXT",
-                "attribution_keywords_json": "TEXT",
-            }
-            for column, declaration in candidate_migrations.items():
-                if column not in candidate_columns:
-                    connection.execute(
-                        f"ALTER TABLE company_candidate_state "
-                        f"ADD COLUMN {column} {declaration}"
-                    )
-            page_visit_columns = {
-                row["name"]
-                for row in connection.execute(
-                    "PRAGMA table_info(web_page_visits)"
-                ).fetchall()
-            }
-            if "cache_status" not in page_visit_columns:
-                connection.execute(
-                    "ALTER TABLE web_page_visits ADD COLUMN cache_status TEXT"
-                )
-            job_state_columns = {
-                row["name"]
-                for row in connection.execute(
-                    "PRAGMA table_info(web_job_state)"
-                ).fetchall()
-            }
-            if "ignored_content_hash" not in job_state_columns:
-                connection.execute(
-                    "ALTER TABLE web_job_state ADD COLUMN ignored_content_hash TEXT"
-                )
+            # 历史手写 ALTER 已收敛为有序迁移（见模块顶部 MIGRATIONS）；
+            # 这里只按 PRAGMA user_version 应用尚未执行的迁移。
+            if version == 0:
+                # 全新数据库：基线脚本已包含当前全部表结构，无需回放历史迁移。
+                version = SCHEMA_VERSION
+            for migration in MIGRATIONS:
+                if migration.version <= version:
+                    continue
+                migration.apply(connection)
+                version = migration.version
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def get_page_analysis_cache(

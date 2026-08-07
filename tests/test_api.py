@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import yaml
 from fastapi.testclient import TestClient
 
-import career_radar.web_repository as web_repository_module
 from career_radar.api import _resolve_default_web_dist, create_app
 from career_radar.application.document_renderer import file_sha256
 from career_radar.application.models import ApplicationArtifact, ApplicationStatus
@@ -20,6 +19,7 @@ from career_radar.config import load_settings
 from career_radar.models import JobPosting, MatchLevel, ProfileFitLevel
 from career_radar.storage import JobStorage
 from career_radar.web_repository import WebRepository
+from career_radar.web_repository import base as web_repository_base
 
 
 def _config() -> str:
@@ -426,7 +426,7 @@ def test_job_list_loads_settings_once_per_request(tmp_path: Path, monkeypatch) -
         [_job(), second],
         "2026-07-18T09:47:00+08:00",
     )
-    original_load_settings = web_repository_module.load_settings
+    original_load_settings = web_repository_base.load_settings
     calls = 0
 
     def counted_load_settings(path):  # type: ignore[no-untyped-def]
@@ -434,7 +434,11 @@ def test_job_list_loads_settings_once_per_request(tmp_path: Path, monkeypatch) -
         calls += 1
         return original_load_settings(path)
 
-    monkeypatch.setattr(web_repository_module, "load_settings", counted_load_settings)
+    monkeypatch.setattr(
+        web_repository_base,
+        "load_settings",
+        counted_load_settings,
+    )
 
     jobs = repository.list_jobs()
 
