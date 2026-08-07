@@ -35,3 +35,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## 运行时依赖
+
+Career Radar 直接使用了以下开源库，其许可证声明由各项目保留：
+
+- [trafilatura](https://github.com/adbar/trafilatura)（Apache-2.0）：用于优先
+  提取正文并去除导航/页脚样板，失败时自动回退到内置 BeautifulSoup 清洗。
+- [apprise](https://github.com/caronc/apprise)（BSD-3-Clause）：用于把岗位
+  摘要推送到 Telegram、企业微信、钉钉、ntfy 等渠道。
+- [litellm](https://github.com/BerriAI/litellm)（MIT，可选安装）：
+  `pip install -e ".[llm-gateway]"` 后，通过 `provider: litellm` 统一接入
+  各模型供应商。

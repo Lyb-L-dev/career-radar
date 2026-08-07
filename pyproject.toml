@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Career Radar Contributors" }]
 dependencies = [
+  "apprise>=1.9,<2",
   "anthropic>=0.55,<2",
   "beautifulsoup4>=4.12,<5",
   "fastapi>=0.115,<1",
@@ -22,6 +23,7 @@ dependencies = [
   "python-dotenv>=1.0,<2",
   "PyYAML>=6.0,<7",
   "requests>=2.32,<3",
+  "trafilatura>=2.0,<3",
   "tzdata>=2025.2; platform_system == 'Windows'",
   "uvicorn>=0.34,<1",
 ]
@@ -32,6 +34,9 @@ dev = [
   "pdfplumber>=0.11,<1",
   "pytest>=8.3,<9",
   "ruff>=0.9,<1",
+]
+llm-gateway = [
+  "litellm>=1.40,<2",
 ]
 
 [project.scripts]

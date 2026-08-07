@@ -1,4 +1,5 @@
 # 生产环境依赖。推荐优先执行 `pip install -e .`，本文件便于传统服务器部署。
+apprise>=1.9,<2
 anthropic>=0.55,<2
 beautifulsoup4>=4.12,<5
 fastapi>=0.115,<1
@@ -11,5 +12,6 @@ python-docx>=1.1,<2
 python-dotenv>=1.0,<2
 PyYAML>=6.0,<7
 requests>=2.32,<3
+trafilatura>=2.0,<3
 tzdata>=2025.2; platform_system == "Windows"
 uvicorn>=0.34,<1

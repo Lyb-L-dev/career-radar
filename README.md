@@ -15,7 +15,14 @@ Career Radar 面向校招求职者：每天访问你配置的企业公开官网�
 - 候选企业支持独立记录“未找到官网、官网无招聘渠道、集团统一招聘、官方公告、仅人工维护、第三方待核验、当前未招聘”等渠道状态；缺少官网不是抓取故障。已核验官方 PDF/图片/公众号文字可人工登记并导入招聘通知，第三方链接不能直接成为岗位事实。
 - 官网首页智能发现“招聘、校招、加入我们、Careers、Jobs”等入口。
 - `requests + BeautifulSoup` 静态抓取；可配置 Playwright 自动回退/始终渲染/完全禁用。
+- 正文提取优先使用 `trafilatura` 去除导航/页脚样板（内容损失过大时自动回退），降低 LLM 输入体积与成本。
+- 岗位详情页提供“相似岗位”：基于本地特征哈希向量（零依赖、离线）计算语义相似度，
+  便于横向比较同类 JD 与发现同一岗位的重复发布。
+- 同义岗位自动合并：同一公司“换标题重发”的岗位（例如“后端开发工程师”与
+  “Java后端开发工程师”、JD 相同）在配置窗口期内自动合并为一个实体，不重复通知；
+  不同岗位（即使共享公司福利样板文本）不会被误合并。
 - DeepSeek JSON Output（默认）、OpenAI Responses API Pydantic 结构化输出，以及 Anthropic 官方 SDK 适配。
+- 可选 `provider: litellm` 统一接入 100+ 模型供应商（含 Ollama 本地模型），需要执行 `pip install -e ".[llm-gateway]"`。
 - 列表页自动跟踪职位详情、岗位列表和分页链接；详情页不自动进入登录或申请表。
 - 提取职位名称、地点、JD 全文、任职资格、招聘类型、2026 届标识、目标届别、发布时间、有效期和申请链接。
 - 分开评估“是否面向 2026 届”和“与个人能力画像是否匹配”，并给出 1～10 投递难度、等级与理由。
@@ -27,6 +34,11 @@ Career Radar 面向校招求职者：每天访问你配置的企业公开官网�
 - 日志按大小滚动，API Key 和 SMTP 密码只从环境变量读取。
 - FastAPI 默认只监听 `127.0.0.1`，提供真实扫描任务、配置安全写回和 Web 静态资源托管；密钥接口只返回“是否已配置”。
 - React 管理端默认调用真实 `/api`，只有显式设置 `VITE_USE_MOCK=true` 才进入演示模式。
+- 首页提供“今日工作台”，汇总待处理岗位更新、收藏未投递岗位、待人工批准材料和监控异常；首次运行时显示三步引导。
+- 岗位筛选条件同步到浏览器地址，可复制链接或刷新后继续；常用筛选可保存在本机浏览器。当前结果和勾选岗位可直接导出安全 CSV。
+- “忽略本次更新”只忽略当前 JD 内容版本；企业再次修改岗位后会自动恢复为待处理更新。
+- 首次配置支持企业 CSV 预览导入：逐行校验、自动去重，有无效行时整批不写入；预览过程不访问企业网站。
+- 管理端按路由加载页面，并将主要第三方依赖拆包，减少首次打开时需要加载的脚本。
 - JD 完整的具体岗位可在网页发起 AI 申请任务：DeepSeek 先做五维匹配和硬性资格评估，人工批准后再生成简历/求职信、完成事实与招聘视角双审，并提供经过路径和哈希校验的本地文件下载。
 - 岗位详情页可手动发起“小红书、知乎、微博、牛客”公开口碑调查：由本机 Agent Reach/OpenCLI 只读搜索，DeepSeek 生成带证据编号的风险归纳，原始线索与报告持久化到 SQLite。
 - 候选企业可登记并人工核验招聘公众号，再由 OpenCLI 搜索和下载公开文章。账号身份、招聘语义和集团子公司归属均由本地规则校验；官方文章导入招聘通知，转载或未核验账号只保存为线索，整个公众号扫描不调用 DeepSeek。
@@ -142,6 +154,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\AIProjects\work\care
 
 开发前端时使用两个 PowerShell 窗口：后端运行上面的 `serve` 命令；`web/` 目录运行 `npm run dev`，再访问 `http://127.0.0.1:7100`。Vite 会把 `/api` 代理到 8000 端口。FastAPI 优先托管 `web/dist`；仅为兼容旧本地目录，找不到时才回退到同级 `career-radar-web/dist`。
 
+首次配置页的“导入企业 CSV”会先显示预览，确认后才原子写入 `config.yaml`。
+支持 UTF-8 CSV 和中英文列名；最小模板如下：
+
+```csv
+企业名称,官网地址,招聘入口,公司类型,行业,省份,城市,是否启用
+示例企业,https://example.com,https://example.com/careers,民营,人工智能与数据,福建,福州,是
+```
+
+“官网地址”和“招聘入口”至少填写一项。重复企业会跳过；只要存在无效网址、
+未知枚举或其他无效行，本批次就不会写入。该预览只做本地格式与安全校验，
+不会发起企业网站请求，也不会调用 DeepSeek。
+
 安全说明：`serve` 会拒绝绑定公网地址，表单也会拒绝 `localhost`、私网和保留 IP，避免把本地管理端变成内网请求代理。Web 不返回 DeepSeek/SMTP 密钥；密钥仍只从 `.env` 或系统环境变量读取。健康检查不返回配置文件或数据库绝对路径，设置页也只展示和接受项目目录内的相对数据路径。若以后部署到服务器并允许远程访问，必须另外配置反向代理认证和 HTTPS。
 
 ### 岗位口碑调查（Agent Reach/OpenCLI）
@@ -234,6 +258,51 @@ companies:
 `private`（民营）、`foreign`（外资）、`joint_venture`（合资）、`other`（其他）。
 旧配置不填写时默认按民营企业处理。`max_pages` 是单家公司覆盖全局
 `crawler.max_pages_per_company` 的扫描上限，适合限制栏目庞大的集团招聘站；按上限正常停止不会被记为失败。
+
+### 直接使用 ATS 公开接口（可选）
+
+部分公司的招聘页由 Greenhouse、Lever、Ashby 等 SaaS ATS 支撑，与其让爬虫遍历
+HTML，不如直接调用它们稳定的公开接口：更快、更准、也省 LLM 提取。参考
+[HA7CH/job-pro](https://github.com/HA7CH/job-pro) 的“按 ATS 家族适配”思路，
+Career Radar 内置了 greenhouse / lever / ashby 和通用的 json_feed 四类适配器。
+在公司配置里加一段 `ats_source` 即可，配置后扫描会跳过 HTML 遍历：
+
+```yaml
+companies:
+  - name: 某外企
+    url: https://careers.example.com
+    ats_source:
+      enabled: true
+      type: greenhouse      # greenhouse | lever | ashby | json_feed
+      tenant: acme          # greenhouse board token / lever company / ashby org
+      evaluate_with_llm: true
+```
+
+`json_feed` 用于自建接口或国企门户的 XHR 数据，需要填 `json_url` 和可选字段映射：
+
+```yaml
+    ats_source:
+      enabled: true
+      type: json_feed
+      json_url: https://example.com/api/jobs
+      json_items_path: data.list      # 数组所在路径，默认 $ 表示整个 JSON
+      json_mapping:                   # 不填时按常见字段名自动识别
+        title: jobTitle
+        description: jobDescription
+        location: city
+        apply_url: applyUrl
+        published_at: postDate
+```
+
+说明：
+
+- ATS 岗位同样走 SQLite 去重、变化检测、日报和通知链路；`evaluate_with_llm`
+  默认开启，会用 LLM 补上届别/能力匹配与难度评估，保证通知筛选不变。关闭后
+  岗位以“未评估”状态入库，适合只想要原始数据源的场景。
+- `json_url` 只允许公开 HTTP(S) 地址，拒绝本机/私网/保留 IP，防止把本机变成
+  内网请求代理。
+- 中国区常见的 Moka、北森、飞书 ATS 多为逆向接口，暂未内置；`json_feed`
+  可作为这些站点的通用兜底，后续可再按同样契约补充专用适配器。
 
 `industry_category` 可选值：`internet`、`gaming`、`pet`、`enterprise_software`、
 `ai_data`、`iot`、`fintech`、`telecom`、`energy`、`manufacturing`、`consumer`、
@@ -633,6 +702,20 @@ npm run lint
 
 测试完全离线，不会调用真实官网、LLM 或邮箱。
 
+## 提示词回归评测（可选）
+
+JD 提取和匹配质量依赖提示词与模型。改提示词或换模型前，可以先跑内置评测集，
+防止“页面类型误判、JD 字段漏提取”等回归悄悄出现。命令会调用当前配置的 LLM：
+
+```powershell
+.\.venv\Scripts\python.exe -m career_radar eval-prompts
+```
+
+默认运行三个固定样例（标准校招 JD、列表页、无招聘官网首页），断言页面类型、
+职位标题、地点与 JD 关键词；任何样例失败时退出码为 1，可接入定时任务或 CI。
+可用 `--limit N` 只跑前 N 个样例，用 `--output report.md` 把 Markdown 报告
+写入文件。样例定义在 `src/career_radar/prompt_eval.py`，可按自己公司新增。
+
 ## 数据库去重与变化检测说明
 
 每个岗位保存四个关键值：
@@ -649,6 +732,25 @@ npm run lint
 - `unchanged`：只更新 `last_seen_at`，不进入日报和邮件。
 
 SQLite 使用 WAL 模式；请勿同时启动多个相同任务。偶尔误启动时会等待数据库锁，长期并发运行没有必要。
+
+### 同义岗位合并（换标题重发）
+
+公司经常把同一个岗位换个标题重发（例如“后端开发工程师”改成“Java后端开发工程师”），
+精确去重会当成新岗位再通知一次。Career Radar 会在精确匹配失败后做一次保守的
+同义判定：同一公司、同一城市（或都缺失）、90 天内仍活跃，且正文（标题+地点+JD）
+字符二元组 Jaccard 相似度 ≥ 0.6（缺失地点时提高到 0.75），才合并到原实体并记为
+`updated`，不会重复发 `new` 通知。阈值经过真实样例校准：同岗位变体约 0.68~0.87，
+不同岗位即使共享公司福利样板文本也低于 0.05。
+
+窗口天数由 `app.semantic_duplicate_window_days` 控制（默认 90，设 0 关闭）。
+对启用该功能之前已经存在的重复，可执行一次清理：
+
+```powershell
+.\.venv\Scripts\python.exe -m career_radar merge-duplicates
+```
+
+该命令只合并满足上述全部条件的岗位，并把被合并岗位的收藏、历史与口碑记录迁移到
+保留实体；执行前建议先备份 `data/career_radar.db`。
 
 ## 合规与已知边界
 
@@ -713,12 +815,64 @@ app:
 
 所有职位仍会进 SQLite；日报由 `output_match_levels` 控制，邮件必须同时通过上述三项条件。
 
+### 如何启用多渠道推送（Apprise）
+
+除 SMTP 邮件外，可以同时把同一份岗位摘要推送到 Telegram、企业微信、钉钉、
+ntfy 等渠道。先在 `config.yaml` 里按
+[Apprise 文档](https://github.com/caronc/apprise) 填写至少一个 URL：
+
+```yaml
+apprise:
+  enabled: true
+  urls:
+    - tgram://bot123456:TOKEN/-1001234567890
+    - ntfy://ntfy.sh/career-radar
+  title_prefix: "[Career Radar]"
+  jd_summary_chars: 500
+```
+
+重启 `career_radar serve` 后，可在设置页点击“发送测试推送”验证；推送筛选
+条件与邮件完全一致（`notify_match_levels` 等），失败只会记录到运行错误，
+不会中断扫描本身。
+
 ## 安全建议
 
 - API Key、邮箱授权码只放 `.env`，并定期轮换。
 - 如果误把 `.env` 提交到 Git，立即在供应商后台撤销旧 Key，仅删除 Git 文件并不足够。
 - CSV 已防护以 `= + - @` 开头的公式文本，但打开任何来自网页的数据时仍不要点击可疑链接。
 - 更新依赖前先在测试环境运行 `pytest`；生产服务器建议保留可回滚的虚拟环境和数据库备份。
+
+## 后台任务与网络安全底座
+
+- API 表单会拒绝直接填写本机、私网和保留 IP；实际抓取前还会解析域名的全部
+  IPv4/IPv6 地址，并在 `robots.txt`、页面重定向和 Playwright 请求发生时重新校验。
+- Playwright 会同时校验顶层页面和 HTTP(S) 子资源，阻止公开页面借浏览器访问本机服务。
+- 官网扫描、口碑调查、微信公众号和申请材料共享统一资源协调器。OpenCLI、浏览器、
+  DeepSeek 和文档渲染按资源排队，避免重复点击造成竞争或同时消耗模型额度。
+- FastAPI 关闭时先停止接收新任务，再协作停止扫描并关闭后台执行器；旧任务的现有
+  SQLite 恢复逻辑仍会在下次启动时把中断状态转换为可恢复状态。
+- 对外错误会隐藏本机路径、密钥片段、邮箱和手机号；完整异常只保存在本地日志。
+
+以上保护不改变人工审批边界：申请材料评估与生成仍只在用户明确操作后调用 DeepSeek。
+
+### 自动化中心与增量分析
+
+设置页的“自动化中心”可以只读检查 Windows 计划任务，并在二次确认后安装、更新或
+移除 `Career Radar Daily Monitor`。安装前会先保存当前设置；任务使用项目自己的
+虚拟环境和 `config.yaml`，支持错过计划时间后尽快补跑，也允许笔记本使用电池时运行。
+
+每日监控可能对新页面或正文变化页面调用 DeepSeek。安装计划任务即表示允许这类定时
+分析，但每轮仍受以下硬上限约束：
+
+```yaml
+crawler:
+  max_llm_pages_per_run: 100
+```
+
+抓取器会保存页面的 `ETag`、`Last-Modified`、正文哈希和上次结构化分析。服务器返回
+HTTP 304，或正文哈希未变化时，会复用上次岗位和后续链接，不重复调用 DeepSeek。
+公司归属规则、候选人画像、模型或关键分析配置发生变化时，缓存会自动失效并重新分析。
+“测试 DeepSeek 连接”和申请材料工作流仍需要各自的人工确认，不会被每日任务触发。
 
 ## License
 

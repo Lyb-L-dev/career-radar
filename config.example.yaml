@@ -8,6 +8,8 @@ app:
   log_dir: logs
   daily_run_time: 08:00
   report_retention_days: 90
+  # 同一公司“换标题重发”的岗位在多少天内合并为一个实体；0 表示关闭。
+  semantic_duplicate_window_days: 90
   output_match_levels: [high, medium, low]
   notify_match_levels: [high]
   notify_profile_fit_levels: [high, medium, unknown]
@@ -29,6 +31,7 @@ crawler:
   max_follow_links_per_page: 100
   max_query_variants_per_path: 3
   max_links_in_prompt: 500
+  max_llm_pages_per_run: 100
   max_download_bytes: 10000000
   min_static_text_chars: 500
   user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
@@ -44,6 +47,12 @@ llm:
   max_retries: 3
   # 使用不支持 DeepSeek thinking 扩展参数的兼容代理时改为 false。
   disable_thinking: true
+  # 可选：统一接入 100+ 模型供应商（含 Ollama 等本地模型）。
+  # 需要先执行 `pip install -e ".[llm-gateway]"`，然后：
+  # provider: litellm
+  # model: deepseek/deepseek-chat
+  # base_url: ""            # 本地模型可填例如 http://localhost:11434
+  # 环境变量沿用各供应商约定，例如 DEEPSEEK_API_KEY / OPENAI_API_KEY。
 
 # 申请材料只写入本机 private/，该目录已被 Git 忽略。
 application:
@@ -117,6 +126,17 @@ smtp:
   subject_prefix: "[Career Radar]"
   jd_summary_chars: 500
 
+# 可选：Apprise 多渠道推送（Telegram/企业微信/钉钉/ntfy 等）。
+# 在 https://github.com/caronc/apprise 查看各渠道 URL 写法，例如：
+#   tgram://bot123456:TOKEN/-1001234567890        Telegram 机器人
+#   matrix://user:pass@host:8443/?room=xxx        Matrix
+#   ntfy://ntfy.sh/topic                          ntfy 临时频道
+apprise:
+  enabled: false
+  urls: []
+  title_prefix: "[Career Radar]"
+  jd_summary_chars: 500
+
 companies:
   - name: 示例公司
     url: https://example.com/careers
@@ -134,3 +154,24 @@ companies:
       # parent_company: 示例集团
       # attribution_keywords: [示例公司, 示例品牌]
       notes: 请替换为企业官方招聘页；示例默认禁用，避免误访问。
+
+      # 可选：使用 ATS 官方公开接口直接拉取岗位，替代 HTML 遍历。
+      # 支持 greenhouse / lever / ashby（填写 tenant）以及 json_feed（自建 JSON 接口）：
+      # ats_source:
+      #   enabled: true
+      #   type: greenhouse
+      #   tenant: acme
+      #   evaluate_with_llm: true
+      #
+      # json_feed 示例（适配自建接口/国企门户的 XHR 数据）：
+      # ats_source:
+      #   enabled: true
+      #   type: json_feed
+      #   json_url: https://example.com/api/jobs
+      #   json_items_path: data.list
+      #   json_mapping:
+      #     title: jobTitle
+      #     description: jobDescription
+      #     location: city
+      #     apply_url: applyUrl
+      #     published_at: postDate
