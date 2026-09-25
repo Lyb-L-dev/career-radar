@@ -29,6 +29,7 @@ from .api_candidates import create_candidates_router
 from .api_companies import create_companies_router
 from .api_jobs import create_jobs_router
 from .api_notifications import create_notifications_router
+from .api_platform_leads import create_platform_leads_router
 from .api_reports import create_reports_router, report_items
 from .api_reputation import create_reputation_router
 from .api_runs import create_runs_router
@@ -41,6 +42,7 @@ from .llm import create_provider
 from .mailer import MailError, send_test_email
 from .models import CandidateProfile
 from .notifications import NotificationError, send_test_notification
+from .platform_leads import BossLeadRepository
 from .public_errors import public_error_message
 from .reputation import ReputationManager
 from .run_manager import RunManager
@@ -346,6 +348,8 @@ def create_app(
     config_file = Path(config_path).expanduser().resolve()
     repository = WebRepository(config_file)
     repository.initialize()
+    platform_leads = BossLeadRepository(repository.settings.app.database_path)
+    platform_leads.initialize()
     task_coordinator = TaskCoordinator()
     run_manager = RunManager(repository, task_coordinator)
     reputation_manager = ReputationManager(repository, task_coordinator)
@@ -359,6 +363,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         repository.initialize()
+        platform_leads.initialize()
         try:
             yield
         finally:
@@ -378,6 +383,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.repository = repository
+    app.state.platform_leads = platform_leads
     app.state.run_manager = run_manager
     app.state.reputation_manager = reputation_manager
     app.state.application_manager = application_manager
@@ -392,6 +398,7 @@ def create_app(
         allow_headers=["Content-Type"],
     )
     app.include_router(create_jobs_router(repository))
+    app.include_router(create_platform_leads_router(platform_leads, repository))
     app.include_router(create_automation_router(repository, automation_service))
     app.include_router(create_applications_router(repository, application_manager))
     app.include_router(create_reputation_router(repository, reputation_manager))

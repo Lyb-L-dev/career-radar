@@ -2,6 +2,7 @@ import { NavLink } from 'react-router'
 import {
   LayoutDashboard,
   Briefcase,
+  Compass,
   Building2,
   LibraryBig,
   Activity,
@@ -18,6 +19,7 @@ import { cn } from '@/lib/utils'
 const NAV_ITEMS = [
   { to: '/', label: '总览', icon: LayoutDashboard, end: true },
   { to: '/jobs', label: '岗位中心', icon: Briefcase },
+  { to: '/platform-leads', label: '平台机会池', icon: Compass },
   { to: '/applications', label: 'AI 申请材料', icon: FileUser },
   { to: '/companies', label: '企业监控', icon: Building2 },
   { to: '/company-candidates', label: '优质企业候选库', icon: LibraryBig },
@@ -37,7 +39,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </span>
         <div className="leading-tight">
           <p className="text-[15px] font-semibold text-ink">Career Radar</p>
-          <p className="text-[11px] text-ink-tertiary">企业官网职位监控</p>
+          <p className="text-[11px] text-ink-tertiary">求职机会与岗位监控</p>
         </div>
       </div>
 
