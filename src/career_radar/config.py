@@ -19,11 +19,13 @@ class ConfigError(ValueError):
 
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_LLM_KEY_NAMES = ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+_LLM_KEY_NAMES = (
+    "DEEPSEEK_API_KEY", "XIAOMIMIMO_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"
+)
 
 
 _API_KEY_PLACEHOLDER_PATTERN = re.compile(
-    r"^(?:sk(?:-ant)?-)?your-(?:deepseek-|openai-|anthropic-)?api-key$",
+    r"^(?:sk(?:-ant)?-)?your-(?:deepseek-|xiaomimimo-|openai-|anthropic-)?api-key$",
     re.IGNORECASE,
 )
 

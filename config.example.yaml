@@ -37,15 +37,15 @@ crawler:
   user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
 
 llm:
-  provider: deepseek
-  model: deepseek-v4-flash
-  base_url: https://api.deepseek.com
+  provider: mimo
+  model: mimo-v2.6-pro
+  base_url: https://api.xiaomimimo.com/v1 # Token Plan tp-/ttp- Key 请改为 https://token-plan-cn.xiaomimimo.com/v1
   request_timeout_seconds: 120
   max_output_tokens: 30000
   max_input_chars: 140000
   chunk_overlap_chars: 4000
   max_retries: 3
-  # 使用不支持 DeepSeek thinking 扩展参数的兼容代理时改为 false。
+  # MiMo 与 DeepSeek 均支持 thinking.type=disabled；如兼容代理不支持可改为 false。
   disable_thinking: true
   # 可选：统一接入 100+ 模型供应商（含 Ollama 等本地模型）。
   # 需要先执行 `pip install -e ".[llm-gateway]"`，然后：

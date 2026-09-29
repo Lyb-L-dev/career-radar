@@ -110,7 +110,7 @@ class CrawlerSettingsPayload(BaseModel):
 
 class LlmSettingsPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    provider: str = Field(pattern=r"^(DeepSeek|OpenAI|Anthropic|LiteLLM)$")
+    provider: str = Field(pattern=r"^(DeepSeek|MiMo|OpenAI|Anthropic|LiteLLM)$")
     model: str = Field(min_length=1)
     apiBaseUrl: str = ""
     apiKeyMasked: str = ""
@@ -226,10 +226,11 @@ def _api_key_configured(provider: str) -> bool:
         # LiteLLM 依赖各供应商约定的环境变量，只要有一个有效即可视为已配置。
         return any(
             not is_api_key_placeholder(os.getenv(name))
-            for name in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+            for name in ("DEEPSEEK_API_KEY", "XIAOMIMIMO_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
         )
     variable = {
         "deepseek": "DEEPSEEK_API_KEY",
+        "mimo": "XIAOMIMIMO_API_KEY",
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
     }[provider]
@@ -273,6 +274,7 @@ def _settings_json(settings, config_root: Path) -> dict[str, Any]:  # type: igno
     ]
     provider_label = {
         "deepseek": "DeepSeek",
+        "mimo": "MiMo",
         "openai": "OpenAI",
         "anthropic": "Anthropic",
         "litellm": "LiteLLM",
@@ -539,9 +541,9 @@ def create_app(
         return {
             "requiresConfirmation": True,
             "provider": (
-                "DeepSeek"
-                if settings.llm.provider == "deepseek"
-                else settings.llm.provider
+                {"deepseek": "DeepSeek", "mimo": "MiMo"}.get(
+                    settings.llm.provider, settings.llm.provider
+                )
             ),
             "model": settings.llm.model,
             "estimatedCalls": 1,
@@ -551,9 +553,9 @@ def create_app(
     @app.post("/api/settings/test-llm")
     async def test_llm(payload: PaidActionConfirmation) -> dict[str, Any]:
         if not payload.confirmed:
-            raise HTTPException(428, "请先确认本次测试会产生一次 DeepSeek API 调用")
-        if repository.settings.llm.provider != "deepseek":
-            raise HTTPException(422, "当前部署只允许测试 DeepSeek 连接")
+            raise HTTPException(428, "请先确认本次测试会产生一次模型 API 调用")
+        if repository.settings.llm.provider not in {"deepseek", "mimo"}:
+            raise HTTPException(422, "连接测试支持当前配置的 MiMo 或 DeepSeek 模型")
 
         def call() -> tuple[int, str]:
             settings = repository.settings
@@ -567,7 +569,7 @@ def create_app(
         except Exception as exc:
             raise HTTPException(
                 502,
-                public_error_message(exc, context="DeepSeek 连接测试"),
+                public_error_message(exc, context="模型连接测试"),
             ) from exc
         return {"ok": True, "latencyMs": latency, "model": model}
 

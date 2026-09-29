@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from .boss_ai import screening_context_hash
 from .models import CandidateProfile
 
 _BOSS_HOSTS = {"zhipin.com", "www.zhipin.com"}
@@ -43,6 +44,17 @@ _SENIOR = re.compile(r"(?:3\s*[-~—至]\s*5|[3-9]\s*年(?:以上|及以上)|至
 _EXPLICIT_SCHOOL = re.compile(
     r"(?<!不)(?<!无)(?<!没有)(?:仅限|必须|要求|只招|限)\s*(?:985|211|双一流)"
 )
+_STUDENT_REQUIRED = re.compile(
+    r"(?<!不)(?<!无)(?<!没有)(?:岗位要求|任职资格|招聘对象|必须|仅限|要求|面向).{0,80}"
+    r"(?:在校生|在读(?:大[一二三四]|本科|研究生)|在校(?:大[一二三四]|本科|研究生))",
+    re.S,
+)
+_EXPLICIT_GRAD_YEAR = re.compile(r"(?:毕业时间|毕业年份|毕业年度)\s*[:：]?\s*(20\d{2})(?:年|届)")
+_GRAD_COHORT = re.compile(r"(?<!\d)(20\d{2})届(?:校招|应届|毕业生|秋招|春招)?")
+_GRAD_YEAR_RANGE = re.compile(r"(?<!\d)(20\d{2})\s*[、/~-]\s*(20\d{2})届")
+_UNCLEAR_COMPANY = re.compile(
+    r"^(?:某(?:知名|大型|互联网|人工智能|科技|企业|公司)|保密|匿名|未公开)"
+)
 _LOGIN_MARKERS = ("登录查看完整内容", "安全验证", "请先登录", "验证码")
 _MAX_IMPORT_BYTES = 5_000_000
 _MAX_ROWS = 2_000
@@ -50,6 +62,12 @@ _MAX_ROWS = 2_000
 
 class BossExportError(ValueError):
     """Import file has an unsupported shape or invalid job identity."""
+
+
+@dataclass(frozen=True, slots=True)
+class BossPreferences:
+    current_student: bool | None = None
+    accept_internship: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +93,11 @@ class BossLead:
         return len(self.description.strip()) >= 120 and not any(
             marker in self.description for marker in _LOGIN_MARKERS
         )
+
+    @property
+    def company_identified(self) -> bool:
+        name = self.company.strip()
+        return bool(name) and not bool(_UNCLEAR_COMPANY.search(name))
 
 
 def _field(raw: dict[str, Any], *keys: str, limit: int = 20_000) -> str:
@@ -131,7 +154,7 @@ def _normalize(raw: dict[str, Any], index: int) -> BossLead:
 def _richer(first: BossLead, second: BossLead) -> BossLead:
     data = asdict(first)
     for key, value in asdict(second).items():
-        if value and (key != "description" or len(value) >= len(data[key])):
+        if value and (key != "description" or second.jd_complete or len(value) > len(data[key])):
             data[key] = value
     return BossLead(**data)
 
@@ -160,8 +183,14 @@ def parse_boss_export(content: str) -> list[BossLead]:
     return list(merged.values())
 
 
-def triage_boss_lead(lead: BossLead, profile: CandidateProfile, first_seen: str) -> dict[str, Any]:
+def triage_boss_lead(
+    lead: BossLead,
+    profile: CandidateProfile,
+    first_seen: str,
+    preferences: BossPreferences | None = None,
+) -> dict[str, Any]:
     """Rank reading priority, never label the number as a hiring probability."""
+    preferences = preferences or BossPreferences(accept_internship=profile.accept_internship)
     title = lead.title.casefold()
     detail = lead.description.casefold()
     tags = lead.tags.casefold()
@@ -201,6 +230,28 @@ def triage_boss_lead(lead: BossLead, profile: CandidateProfile, first_seen: str)
         blockers.append("JD 明确限定学校背景")
     if _SENIOR.search(tags):
         blockers.append("平台经验标签要求多年工作经验")
+    grad_years = {int(value) for value in _EXPLICIT_GRAD_YEAR.findall(lead.description)}
+    grad_years.update(
+        int(value) for value in _GRAD_COHORT.findall(f"{lead.title} {lead.description}")
+    )
+    for first, second in _GRAD_YEAR_RANGE.findall(f"{lead.title} {lead.description}"):
+        grad_years.update((int(first), int(second)))
+    if grad_years and profile.graduation_year not in grad_years:
+        blockers.append(
+            f"岗位明确要求 {', '.join(map(str, sorted(grad_years)))} 届，你是 {profile.graduation_year} 届"
+        )
+    student_requirement = any(
+        "优先" not in lead.description[match.end() : match.end() + 8]
+        for match in _STUDENT_REQUIRED.finditer(lead.description)
+    )
+    if preferences.current_student is False and ("在校生" in tags or student_requirement):
+        blockers.append("岗位要求当前在校，但你已毕业")
+    if not preferences.accept_internship and (
+        "实习" in title or "实习" in tags or "实习生" in lead.description[:120]
+    ):
+        blockers.append("岗位是实习性质，你已选择只看可投正式岗")
+    if not lead.company_identified:
+        reasons.append("招聘公司名称未公开，先核对招聘方")
     if any(term in tags for term in _EARLY) or any(term in title for term in _EARLY):
         score += 25
         reasons.append("校招、应届或实习岗位优先")
@@ -238,6 +289,8 @@ def triage_boss_lead(lead: BossLead, profile: CandidateProfile, first_seen: str)
 
     if blockers:
         category = "excluded"
+    elif not lead.company_identified:
+        category = "review"
     elif not lead.jd_complete:
         category = "review"
     elif score >= 65:
@@ -271,12 +324,53 @@ class BossLeadRepository:
                     is_favorite INTEGER NOT NULL DEFAULT 0,
                     is_applied INTEGER NOT NULL DEFAULT 0,
                     is_hidden INTEGER NOT NULL DEFAULT 0,
+                    ai_context_hash TEXT,
+                    ai_result_json TEXT,
+                    ai_checked_at TEXT,
                     UNIQUE(source, external_id)
                 )"""
             )
+            existing_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(platform_job_leads)")
+            }
+            for column in ("ai_context_hash", "ai_result_json", "ai_checked_at"):
+                if column not in existing_columns:
+                    connection.execute(f"ALTER TABLE platform_job_leads ADD COLUMN {column} TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_platform_leads_seen "
                 "ON platform_job_leads(last_seen_at DESC)"
+            )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS platform_lead_preferences (
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    current_student INTEGER,
+                    accept_internship INTEGER NOT NULL
+                )"""
+            )
+
+    def get_preferences(self, default_accept_internship: bool = True) -> BossPreferences:
+        with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT current_student, accept_internship FROM platform_lead_preferences WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            return BossPreferences(accept_internship=default_accept_internship)
+        return BossPreferences(
+            current_student=(
+                bool(row["current_student"]) if row["current_student"] is not None else None
+            ),
+            accept_internship=bool(row["accept_internship"]),
+        )
+
+    def set_preferences(self, preferences: BossPreferences) -> None:
+        current = None if preferences.current_student is None else int(preferences.current_student)
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "INSERT INTO platform_lead_preferences(id, current_student, accept_internship) "
+                "VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                "current_student = excluded.current_student, "
+                "accept_internship = excluded.accept_internship",
+                (current, int(preferences.accept_internship)),
             )
 
     def import_leads(self, leads: list[BossLead]) -> dict[str, int]:
@@ -313,7 +407,8 @@ class BossLeadRepository:
                     )
         return result
 
-    def list_leads(self, profile: CandidateProfile) -> list[dict[str, Any]]:
+    def list_leads(self, profile: CandidateProfile, model: str = "") -> list[dict[str, Any]]:
+        preferences = self.get_preferences(profile.accept_internship)
         with closing(self._connect()) as connection, connection:
             rows = connection.execute(
                 "SELECT * FROM platform_job_leads ORDER BY last_seen_at DESC"
@@ -321,6 +416,10 @@ class BossLeadRepository:
         items = []
         for row in rows:
             lead = BossLead(**json.loads(row["payload_json"]))
+            current_ai_hash = (
+                screening_context_hash(lead, profile, model, preferences) if model else None
+            )
+            ai_current = bool(row["ai_result_json"] and row["ai_context_hash"] == current_ai_hash)
             items.append(
                 {
                     **asdict(lead),
@@ -328,12 +427,19 @@ class BossLeadRepository:
                     "source": "boss",
                     "sourceLabel": "BOSS直聘 · 平台线索",
                     "jdComplete": lead.jd_complete,
+                    "aiScreenable": lead.jd_complete
+                    and lead.company_identified
+                    and len(lead.description) <= 8_000,
+                    "companyIdentified": lead.company_identified,
                     "firstSeenAt": row["first_seen_at"],
                     "lastSeenAt": row["last_seen_at"],
                     "isFavorite": bool(row["is_favorite"]),
                     "isApplied": bool(row["is_applied"]),
                     "isHidden": bool(row["is_hidden"]),
-                    **triage_boss_lead(lead, profile, row["first_seen_at"]),
+                    "aiResult": json.loads(row["ai_result_json"]) if ai_current else None,
+                    "aiCheckedAt": row["ai_checked_at"] if ai_current else None,
+                    "aiNeedsRefresh": bool(row["ai_result_json"] and not ai_current),
+                    **triage_boss_lead(lead, profile, row["first_seen_at"], preferences),
                 }
             )
         category_order = {"priority": 0, "review": 1, "lower": 2, "excluded": 3}
@@ -346,6 +452,72 @@ class BossLeadRepository:
             )
         )
         return items
+
+    def get_ai_source(self, lead_id: str) -> tuple[BossLead, str, str | None, str | None] | None:
+        with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT payload_json, first_seen_at, ai_context_hash, ai_result_json "
+                "FROM platform_job_leads WHERE id = ?",
+                (lead_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return (
+            BossLead(**json.loads(row["payload_json"])),
+            row["first_seen_at"],
+            row["ai_context_hash"],
+            row["ai_result_json"],
+        )
+
+    def save_ai_result(
+        self,
+        lead_id: str,
+        expected_hash: str,
+        result: dict[str, Any],
+        profile: CandidateProfile,
+        model: str,
+        preferences: BossPreferences,
+    ) -> bool:
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload_json FROM platform_job_leads WHERE id = ?", (lead_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            lead = BossLead(**json.loads(row["payload_json"]))
+            preference_row = connection.execute(
+                "SELECT current_student, accept_internship FROM platform_lead_preferences WHERE id = 1"
+            ).fetchone()
+            current_preferences = (
+                BossPreferences(
+                    current_student=(
+                        bool(preference_row["current_student"])
+                        if preference_row["current_student"] is not None
+                        else None
+                    ),
+                    accept_internship=bool(preference_row["accept_internship"]),
+                )
+                if preference_row
+                else BossPreferences(accept_internship=profile.accept_internship)
+            )
+            if (
+                current_preferences != preferences
+                or screening_context_hash(lead, profile, model, current_preferences)
+                != expected_hash
+            ):
+                return False
+            connection.execute(
+                "UPDATE platform_job_leads SET ai_context_hash = ?, ai_result_json = ?, "
+                "ai_checked_at = ? WHERE id = ?",
+                (
+                    expected_hash,
+                    json.dumps(result, ensure_ascii=False, sort_keys=True),
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                    lead_id,
+                ),
+            )
+            return True
 
     def set_state(self, lead_id: str, field: str, value: bool) -> bool:
         fields = {"favorite": "is_favorite", "applied": "is_applied", "hidden": "is_hidden"}

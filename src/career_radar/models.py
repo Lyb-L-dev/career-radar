@@ -300,7 +300,7 @@ class LLMConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["openai", "anthropic", "deepseek", "litellm"] = "openai"
+    provider: Literal["openai", "anthropic", "deepseek", "mimo", "litellm"] = "openai"
     model: str = Field(min_length=1)
     base_url: str | None = None
     request_timeout_seconds: float = Field(default=120, gt=0)

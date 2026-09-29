@@ -848,7 +848,7 @@ export interface AppSettings {
     respectRobots: boolean
   }
     llm: {
-      provider: 'DeepSeek' | 'OpenAI' | 'Anthropic' | 'LiteLLM'
+      provider: 'DeepSeek' | 'MiMo' | 'OpenAI' | 'Anthropic' | 'LiteLLM'
     model: string
     apiBaseUrl: string
     apiKeyMasked: string

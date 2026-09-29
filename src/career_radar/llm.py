@@ -334,6 +334,15 @@ class DeepSeekProvider(LLMProvider):
             raise RetryableLLMError(f"DeepSeek 口碑结构校验失败：{exc}") from exc
 
 
+class MiMoProvider(DeepSeekProvider):
+    """Xiaomi MiMo via the same JSON Object gateway used by DeepSeek."""
+
+    DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
+    API_KEY_VARIABLE = "XIAOMIMIMO_API_KEY"
+    PROVIDER_NAME = "MiMo"
+    OUTPUT_TOKENS_PARAMETER = "max_completion_tokens"
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic 官方 SDK 适配器。
 
@@ -501,6 +510,8 @@ def create_provider(config: LLMConfig) -> LLMProvider:
         return OpenAIProvider(config)
     if config.provider == "deepseek":
         return DeepSeekProvider(config)
+    if config.provider == "mimo":
+        return MiMoProvider(config)
     if config.provider == "litellm":
         return LiteLLMProvider(config)
     return AnthropicProvider(config)

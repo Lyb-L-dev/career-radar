@@ -1,4 +1,4 @@
-"""申请材料专用 DeepSeek 结构化调用网关。"""
+"""申请材料专用 OpenAI 兼容结构化调用网关。"""
 
 from __future__ import annotations
 
@@ -31,10 +31,17 @@ class ApplicationLLMGateway(Protocol):
         """返回经过 Pydantic 严格校验的结构化对象。"""
 
 
-class DeepSeekApplicationGateway:
-    """通过 OpenAI 兼容接口调用 DeepSeek JSON Object 模式。"""
+class CompatibleApplicationGateway:
+    """Call DeepSeek or MiMo JSON Object endpoints through the OpenAI SDK."""
 
-    DEFAULT_BASE_URL = "https://api.deepseek.com"
+    BASE_URLS = {
+        "deepseek": "https://api.deepseek.com",
+        "mimo": "https://api.xiaomimimo.com/v1",
+    }
+    API_KEY_VARIABLES = {
+        "deepseek": "DEEPSEEK_API_KEY",
+        "mimo": "XIAOMIMIMO_API_KEY",
+    }
 
     def __init__(
         self,
@@ -43,17 +50,25 @@ class DeepSeekApplicationGateway:
         client: Any | None = None,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
-        if config.provider != "deepseek":
-            raise ValueError("申请材料第二阶段目前只支持 DeepSeek provider")
+        if config.provider not in self.BASE_URLS:
+            raise ValueError("申请材料第二阶段支持 DeepSeek 或 MiMo provider")
+        self.provider_name = "MiMo" if config.provider == "mimo" else "DeepSeek"
+        self.output_tokens_parameter = (
+            "max_completion_tokens" if config.provider == "mimo" else "max_tokens"
+        )
         if client is None:
-            api_key = _require_api_key("DEEPSEEK_API_KEY", "DeepSeek")
+            api_key = _require_api_key(
+                self.API_KEY_VARIABLES[config.provider], self.provider_name
+            )
             try:
                 from openai import OpenAI
             except ImportError as exc:
-                raise FatalLLMError("DeepSeek 适配依赖 openai SDK，请执行 pip install -e .") from exc
+                raise FatalLLMError(
+                    f"{self.provider_name} 适配依赖 openai SDK，请执行 pip install -e ."
+                ) from exc
             client = OpenAI(
                 api_key=api_key,
-                base_url=config.base_url or self.DEFAULT_BASE_URL,
+                base_url=config.base_url or self.BASE_URLS[config.provider],
                 timeout=config.request_timeout_seconds,
                 max_retries=0,
             )
@@ -80,24 +95,26 @@ class DeepSeekApplicationGateway:
                 {"role": "user", "content": full_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "max_tokens": self.config.max_output_tokens,
+            self.output_tokens_parameter: self.config.max_output_tokens,
         }
         if self.config.disable_thinking:
             request["extra_body"] = {"thinking": {"type": "disabled"}}
         try:
             completion = self.client.chat.completions.create(**request)
         except Exception as exc:
-            raise _request_error("DeepSeek 申请工作流", exc) from exc
+            raise _request_error(f"{self.provider_name} 申请工作流", exc) from exc
         content = completion.choices[0].message.content or ""
         if not content.strip():
-            raise RetryableLLMError("DeepSeek 申请工作流返回空内容")
+            raise RetryableLLMError(f"{self.provider_name} 申请工作流返回空内容")
         try:
-            payload = _extract_json_object(content, "DeepSeek 申请工作流")
+            payload = _extract_json_object(content, f"{self.provider_name} 申请工作流")
             return response_model.model_validate(payload)
         except LLMError:
             raise
         except ValidationError as exc:
-            raise RetryableLLMError(f"DeepSeek 结构化结果校验失败：{exc}") from exc
+            raise RetryableLLMError(
+                f"{self.provider_name} 结构化结果校验失败：{exc}"
+            ) from exc
 
     def generate(self, response_model: type[T], system_prompt: str, user_prompt: str) -> T:
         last_error: RetryableLLMError | None = None
@@ -111,7 +128,8 @@ class DeepSeekApplicationGateway:
                 if attempt < self.config.max_retries:
                     delay = min(2 ** (attempt - 1), 20)
                     LOGGER.warning(
-                        "DeepSeek 申请工作流瞬时错误，%s 秒后重试（%s/%s）：%s",
+                        "%s 申请工作流瞬时错误，%s 秒后重试（%s/%s）：%s",
+                        self.provider_name,
                         delay,
                         attempt,
                         self.config.max_retries,
@@ -123,5 +141,9 @@ class DeepSeekApplicationGateway:
                     f"申请 LLM 网关返回未分类异常：{type(exc).__name__}: {exc}"
                 ) from exc
         raise RetryableLLMError(
-            f"DeepSeek 申请工作流连续失败 {self.config.max_retries} 次：{last_error}"
+            f"{self.provider_name} 申请工作流连续失败 {self.config.max_retries} 次：{last_error}"
         )
+
+
+# Preserve imports used by existing application integrations and external callers.
+DeepSeekApplicationGateway = CompatibleApplicationGateway

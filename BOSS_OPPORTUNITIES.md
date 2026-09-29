@@ -6,10 +6,39 @@ Career Radar 的 BOSS 机会池位于 Web 管理端 **平台机会池**。它与
 
 ## 使用
 
-1. 在自己已登录的 Chrome/Edge 中，使用 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper) 导出职位列表或详情 JSON。该项目提供 `--setup-chrome`、`--keyword`、`--city`、`--pages` 和 `--detail` 等参数；请按它的 README 安装与运行。Career Radar 本身不读取浏览器 Cookie，也不启动这个外部脚本。
+1. 在自己已登录的 Edge 中，使用已放在 `E:\AIProjects\work\boss-zhipin-scraper` 的 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper) 导出职位列表或详情 JSON。Career Radar 本身不读取浏览器 Cookie；抓取脚本在独立虚拟环境运行。
 2. 打开本地 Web 管理端的 **平台机会池**，选择导出的 JSON。先查看总数、完整 JD 数和需确认数，再点击 **确认导入**。单个文件最多 5 MB、2000 条。
 3. 按“优先阅读 / 需确认 / 低优先级 / 已排除”查看。每条机会都展示筛选理由、BOSS 原始链接、首次和最近见到的日期。收藏和投递状态在重复导入后保留。
 4. 需要更多城市时，分城市导出并逐次导入。职位使用 BOSS 原始 ID 去重；城市不限不会默认为上海或只保留配置中的优选城市。
+
+当前用户已确认 **2026 届、已毕业、不接受实习岗位**。平台机会池已保存这两个独立偏好：明确要求在校、实习性质或其他毕业届别的岗位会解释原因并进入“已排除”；只写“在校生优先、毕业生也可”的岗位保留。此时搜索“经验不限 / 1 年以内”的初级岗位通常比继续刷 2027 届校招更有效。
+
+### Windows 上第一次登录
+
+本机已克隆并安装上游工具 2.2.0；其专用 Edge 窗口已启动。若窗口关闭，重新打开 PowerShell 执行：
+
+```powershell
+cd E:\AIProjects\work\boss-zhipin-scraper
+.\.venv\Scripts\python.exe scripts\boss_cdp_raw.py --setup-edge --no-wait-login
+```
+
+`--setup-edge` 会打开**专用且可见的 Edge 窗口**，首次不会复制日常浏览器的登录态。请在这个窗口里打开 BOSS 直聘，使用你自己的手机号/扫码方式登录并手动完成可能出现的验证；不要在 Career Radar 页面或聊天里填写验证码、密码、Cookie。工具会在专用浏览器里保存登录状态。成功后可以执行：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\boss_cdp_raw.py --check
+.\.venv\Scripts\python.exe scripts\boss_cdp_raw.py --smoke-test
+.\.venv\Scripts\python.exe scripts\boss_cdp_raw.py --keyword "FDE" --city 上海 --pages 1 --max-details 5
+```
+
+最后一条是少量真实岗位试抓；将其生成的详情 JSON 导入上面的**平台机会池**。这是上游工具在 2026-09-26 固定提交 `80f0e478` 的命令与流程。本对话已完成安装和专用 Edge 启动；用户在专用窗口手动登录后，已完成一次 FDE 小样本实抓（见下方验证记录）。
+
+### AI 二次筛选
+
+导入完整 JD 后，页面可以单条点击“AI 判断能否投”，也可以点击“筛选待看岗位”顺序处理最多 20 条。它先按现有规则跳过明确不符合条件、缺完整 JD、已隐藏或已投递的岗位；每条点击会使用当前配置的 **小米 MiMo**，发送职位名称、标签、最多 8000 字 JD 和非敏感画像（学历、毕业年份、技能、项目等）。超过 8000 字的 JD 暂不交给 AI 判断报名资格，会提示人工核对。姓名、手机号、邮箱与浏览器登录态不在输入中。
+
+结果把**报名硬条件**和**岗位方向/技能匹配**分别显示，附 JD 与画像的原文证据。模型引用的候选人证据必须取自输入画像提供的原文字段；不能核实的单项资格会降为“待确认”，而不会把整条岗位错误地标成“能报”或“不能报”。AI 结果不改变官方岗位、不自动投递，也不会把模型判断称为录取概率。同一 JD、画像、模型接口与提示词版本重复查看会使用 SQLite 缓存；任一项变化就重新评估。每次请求将模型输出限制为 1800 token、最多重试 2 次；按钮发起前不会调用付费模型。
+
+本机已为独立工作树准备自己的 `config.yaml` 与 `.env`：仅复用原项目的非联系方式求职画像和 MiMo 配置，把 MiMo Key 写入此工作树 Git 忽略的 `.env`，数据库指向独立文件；没有复制原项目的整份 `.env`。需要重新配置时使用 `provider: mimo`、`model: mimo-v2.6-pro` 和 `XIAOMIMIMO_API_KEY`。按量 Key 的接口地址为 `https://api.xiaomimimo.com/v1`；Token Plan Key 使用 `https://token-plan-cn.xiaomimimo.com/v1`。密钥不要提交到 Git，亦无需发给任何人。
 
 导入接受上游的 `{"jobs": [...]}` 列表文件和详情记录数组。列表文件没有完整 JD 时会进入“需确认”；随后导入详情文件会补全同一职位。无效 JSON、缺少职位 ID 或名称的记录会让**整批拒绝写入**；登录墙正文不会标为完整 JD。重复导入只更新最新可用字段，不清除原有完整 JD、收藏或已投递状态。
 
@@ -19,4 +48,6 @@ Career Radar 的 BOSS 机会池位于 Web 管理端 **平台机会池**。它与
 
 导入、去重与排序见 `src/career_radar/platform_leads.py`；本地 API 为 `/api/platform-leads`，页面为 `/platform-leads`。只保留求职判断所需的职位字段，不把原始导出中的招聘者信息或浏览器会话写入机会池。
 
-已用合成 BOSS JSON 验证预览、列表/详情合并、重复导入、手动状态、明确学历门槛、登录墙/缺 JD 以及与官网岗位表隔离。用户尚未登录 BOSS，因此**没有进行真实抓取或验证当前 BOSS 页面成功率**。下一阶段是在用户准备好自己的登录会话后，小批量测试上游抓取，并核对完整 JD、限流和异常处理。
+已用合成 BOSS JSON 验证预览、列表/详情合并、重复导入、手动状态、明确学历门槛、登录墙/缺 JD、AI 证据校验与缓存失效，以及与官网岗位表隔离。自动化测试使用假网关；**另有少量真实 MiMo 调用**验证了实际输出与证据降级。
+
+2026-09-28 实测：专用 Edge 的 CDP 烟雾测试可读取 BOSS 搜索响应。FDE/上海、AI 应用开发/上海应届、AI Agent/杭州 1 年以内，各运行 **1 页、最多 3 条详情**，共得到 **32 个唯一机会**；与实际身份和届别核对后，14 条明确不合适，17 条缺完整 JD 或招聘方不明而待确认，1 条有完整 JD、公司明确、未被硬条件排除。FDE 样本中的两条方向相关岗位要求在校实习，不能因 AI 认为“方向强相关”就推荐毕业用户投递；应届样本的两个详情则明确面向 2027 届。唯一进入当前 MiMo 二次筛选的 2026 届初级岗位被判“方向匹配较弱、报名资格待确认”，原因之一是当前画像未记录相关 Codex/Agent/Skill 项目证据。这些结果只覆盖本机本次小样本，不代表其他城市、时间或关键词的抓取成功率。

@@ -1,6 +1,6 @@
 # Career Radar：企业官网招聘信息自动监控与完整 JD 提取
 
-> BOSS 直聘职位可通过独立的[平台机会池](BOSS_OPPORTUNITIES.md)离线导入和筛选；平台机会与官网核实岗位分别保存。
+> BOSS 直聘职位可通过独立的[平台机会池](BOSS_OPPORTUNITIES.md)导入并用小米 MiMo 二次筛选；平台机会与官网核实岗位分别保存。
 
 Career Radar 面向校招求职者：每天访问你配置的企业公开官网，智能寻找招聘入口和职位详情页，用 LLM 提取完整 JD，利用 SQLite 去重/检测变化，并输出 Markdown、CSV 和可选邮件提醒。项目同时提供本地 FastAPI 与 React 管理端，可直接查看真实画像、岗位、企业、运行、日报和通知数据。
 
@@ -23,7 +23,7 @@ Career Radar 面向校招求职者：每天访问你配置的企业公开官网�
 - 同义岗位自动合并：同一公司“换标题重发”的岗位（例如“后端开发工程师”与
   “Java后端开发工程师”、JD 相同）在配置窗口期内自动合并为一个实体，不重复通知；
   不同岗位（即使共享公司福利样板文本）不会被误合并。
-- DeepSeek JSON Output（默认）、OpenAI Responses API Pydantic 结构化输出，以及 Anthropic 官方 SDK 适配。
+- 小米 MiMo JSON Output（默认）、可选 DeepSeek、OpenAI Responses API Pydantic 结构化输出，以及 Anthropic 官方 SDK 适配。
 - 可选 `provider: litellm` 统一接入 100+ 模型供应商（含 Ollama 本地模型），需要执行 `pip install -e ".[llm-gateway]"`。
 - 列表页自动跟踪职位详情、岗位列表和分页链接；详情页不自动进入登录或申请表。
 - 提取职位名称、地点、JD 全文、任职资格、招聘类型、2026 届标识、目标届别、发布时间、有效期和申请链接。
@@ -119,10 +119,10 @@ Set-ExecutionPolicy -Scope Process Bypass
 “Add Python to PATH”。仅使用静态抓取且 `render_mode: never` 时，可以不安装
 Chromium；Python 包本身仍会安装，只有实际启用渲染时才启动浏览器。
 
-用记事本或 VS Code 打开 `.env`。项目已经按你拥有的 DeepSeek API 配好，至少把这一行的占位符替换为真实 Key：
+用记事本或 VS Code 打开 `.env`。默认使用小米 MiMo，至少把这一行的占位符替换为真实 Key：
 
 ```dotenv
-DEEPSEEK_API_KEY=sk-你的真实DeepSeek密钥
+XIAOMIMIMO_API_KEY=你的真实小米MiMo密钥
 ```
 
 若以后切换供应商，再填写 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不要把 `.env` 上传到 GitHub；项目已经在 `.gitignore` 中忽略它。
@@ -325,13 +325,13 @@ companies:
 岗位归给该子公司。候选库中的第三方招聘平台链接只保存为待核验线索，不能直接写入正式
 监控配置或岗位事实。
 
-DeepSeek 默认配置：
+小米 MiMo 默认配置：
 
 ```yaml
 llm:
-  provider: deepseek
-  model: deepseek-v4-flash
-  base_url: https://api.deepseek.com
+  provider: mimo
+  model: mimo-v2.6-pro
+  base_url: https://api.xiaomimimo.com/v1 # Token Plan Key 使用 https://token-plan-cn.xiaomimimo.com/v1
   request_timeout_seconds: 120
   max_output_tokens: 30000
   max_input_chars: 140000
@@ -339,11 +339,11 @@ llm:
   max_retries: 3
 ```
 
-DeepSeek 提供 OpenAI 兼容接口。本工具启用官方要求的 JSON Output，再用 Pydantic 做本地严格校验。`deepseek-v4-flash` 适合高频结构化抽取；模型是否对你的账号开放以模型列表为准。官方已说明旧的 `deepseek-chat` / `deepseek-reasoner` 别名将在 2026-07-24 停用，因此示例不再使用旧别名：
+小米 MiMo 提供 OpenAI 兼容的 Chat Completions API。本工具使用 JSON Object 模式输出，再用 Pydantic 本地校验。模型与接口地址以账号套餐为准；按量 Key 使用上面的接口，Token Plan Key 使用 `https://token-plan-cn.xiaomimimo.com/v1`：
 
-- [DeepSeek 快速开始与 OpenAI 兼容说明](https://api-docs.deepseek.com/)
-- [DeepSeek JSON Output](https://api-docs.deepseek.com/guides/json_mode/)
-- [DeepSeek 模型更新记录](https://api-docs.deepseek.com/updates/)
+- [MiMo 首次调用 API](https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call)
+- [MiMo 结构化输出](https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/structured-output)
+- [MiMo 模型列表](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)
 
 切换 OpenAI：
 

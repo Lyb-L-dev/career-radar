@@ -196,7 +196,7 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
               <Field label="单家公司最大页面数">
                 <Input type="number" min={1} max={100} value={draft.crawler.maxPagesPerCompany} onChange={(e) => patch((s) => ({ ...s, crawler: { ...s.crawler, maxPagesPerCompany: Number(e.target.value) } }))} className="rounded-lg" />
               </Field>
-              <Field label="单次 DeepSeek 页面上限" hint="只统计新页面或正文发生变化的页面；缓存命中不计入">
+              <Field label="单次 AI 页面上限" hint="只统计新页面或正文发生变化的页面；缓存命中不计入">
                 <Input type="number" min={1} max={5000} value={draft.crawler.maxLlmPagesPerRun} onChange={(e) => patch((s) => ({ ...s, crawler: { ...s.crawler, maxLlmPagesPerRun: Number(e.target.value) } }))} className="rounded-lg" />
               </Field>
               <Field label="请求超时（秒）">
@@ -231,6 +231,7 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
                 >
                   <SelectTrigger className="rounded-lg"><SelectValue /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="MiMo">小米 MiMo</SelectItem>
                     <SelectItem value="DeepSeek">DeepSeek</SelectItem>
                     <SelectItem value="LiteLLM">LiteLLM（统一网关）</SelectItem>
                   </SelectContent>
@@ -454,7 +455,7 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
               </div>
             </dl>
             <div className="rounded-lg bg-success-soft px-4 py-3 text-[13px] text-success">
-              安装计划任务即表示允许每日监控在新页面或变化页面上调用 DeepSeek；单次调用范围受“抓取设置 → DeepSeek 页面上限”约束。缓存命中页面不会重复调用。连接测试和申请材料仍需单独人工确认。
+              安装计划任务即表示允许每日监控在新页面或变化页面上调用当前 AI 模型；单次调用范围受“抓取设置 → AI 页面上限”约束。缓存命中页面不会重复调用。连接测试和申请材料仍需单独人工确认。
             </div>
             <div className="flex justify-end gap-2.5">
               {automation?.installed && (
@@ -562,7 +563,7 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
         description={
           automationAction === 'remove'
             ? '将从 Windows 任务计划程序中移除 Career Radar，每日扫描不再自动启动。'
-            : `将保存当前设置，并在 Windows 中创建每天 ${draft.basic.dailyRunTime} 运行的任务。新页面或变化页面可能调用 DeepSeek，单次最多分析 ${draft.crawler.maxLlmPagesPerRun} 页；未变化页面使用缓存。`
+            : `将保存当前设置，并在 Windows 中创建每天 ${draft.basic.dailyRunTime} 运行的任务。新页面或变化页面可能调用当前 AI 模型，单次最多分析 ${draft.crawler.maxLlmPagesPerRun} 页；未变化页面使用缓存。`
         }
         confirmLabel={automationAction === 'remove' ? '确认移除' : '确认安装'}
         destructive={automationAction === 'remove'}
@@ -585,17 +586,17 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
       <ConfirmDialog
         open={llmConfirmOpen}
         onOpenChange={setLlmConfirmOpen}
-        title="确认测试 DeepSeek 连接？"
-        description="本次测试会向当前 DeepSeek 模型发送一次最小结构化请求，可能产生少量 API 费用。系统不会自动重复测试。"
+        title="确认测试模型连接？"
+        description="本次测试会向当前配置的模型发送一次最小结构化请求，可能产生少量 API 费用。系统不会自动重复测试。"
         confirmLabel="确认并调用一次"
         onConfirm={async () => {
           setLlmConfirmOpen(false)
           setLlmTesting(true)
           try {
             const res = await testLlmConnection(true)
-            toast.success('DeepSeek 连接正常', { description: `模型 ${res.model} · 延迟 ${res.latencyMs}ms` })
+            toast.success('模型连接正常', { description: `模型 ${res.model} · 延迟 ${res.latencyMs}ms` })
           } catch (error) {
-            toast.error('DeepSeek 连接失败', { description: error instanceof Error ? error.message : '请检查 API 配置。' })
+            toast.error('模型连接失败', { description: error instanceof Error ? error.message : '请检查 API 配置。' })
           } finally {
             setLlmTesting(false)
           }

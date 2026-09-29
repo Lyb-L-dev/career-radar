@@ -4,12 +4,16 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
+from career_radar import api_platform_leads
 from career_radar.api import create_app
+from career_radar.boss_ai import BossAIResult
 from career_radar.models import CandidateProfile
 from career_radar.platform_leads import (
     BossExportError,
     BossLeadRepository,
+    BossPreferences,
     parse_boss_export,
     triage_boss_lead,
 )
@@ -123,7 +127,99 @@ def test_school_preference_is_not_mistaken_for_hard_requirement() -> None:
     assert triage_boss_lead(required, profile, seen)["category"] == "excluded"
 
 
-def test_platform_api_keeps_leads_out_of_official_jobs(tmp_path: Path) -> None:
+def test_graduate_excludes_in_school_internship_but_keeps_formal_new_grad(tmp_path: Path) -> None:
+    repo = BossLeadRepository(tmp_path / "leads.db")
+    repo.initialize()
+    internship = _job(
+        "student-only",
+        title="FDE 实习生",
+        tags="实习 | 本科",
+        jd=JD + "岗位要求：计算机相关专业在读大四学生，可连续实习三个月。",
+    )
+    formal = _job("formal", title="AI 应用工程师", tags="应届生 | 本科")
+    repo.import_leads(parse_boss_export(_list_file([internship, formal])))
+    repo.set_preferences(BossPreferences(current_student=False, accept_internship=False))
+    by_id = {item["external_id"]: item for item in repo.list_leads(_profile())}
+    assert by_id["student-only"]["category"] == "excluded"
+    assert any("已毕业" in reason for reason in by_id["student-only"]["blockers"])
+    assert by_id["formal"]["category"] != "excluded"
+
+
+def test_graduate_keeps_student_preference_when_graduates_are_allowed() -> None:
+    lead = parse_boss_export(
+        _list_file(
+            [
+                _job(
+                    "optional-student",
+                    title="AI 应用工程师",
+                    tags="本科 | 应届生",
+                    jd=JD + "岗位要求：在校生优先，已毕业的应届生也可报名。",
+                )
+            ]
+        )
+    )[0]
+    result = triage_boss_lead(
+        lead,
+        _profile(),
+        "2026-09-28T00:00:00+00:00",
+        BossPreferences(current_student=False, accept_internship=False),
+    )
+    assert result["category"] != "excluded"
+
+
+def test_explicit_graduation_year_blocks_only_other_cohorts() -> None:
+    profile = CandidateProfile(graduation_year=2026, skills=["Python"])
+    other_year = parse_boss_export(
+        _list_file(
+            [
+                _job(
+                    "grad-2027",
+                    title="AI 应用工程师",
+                    jd=JD + "毕业时间：2027年 招聘截止日期：2026.10.31",
+                )
+            ]
+        )
+    )[0]
+    mixed_years = parse_boss_export(
+        _list_file(
+            [
+                _job(
+                    "grad-mixed",
+                    title="2026、2027届 AI 应用工程师",
+                    jd=JD,
+                )
+            ]
+        )
+    )[0]
+    seen = "2026-09-28T00:00:00+00:00"
+    assert triage_boss_lead(other_year, profile, seen)["category"] == "excluded"
+    assert triage_boss_lead(mixed_years, profile, seen)["category"] != "excluded"
+
+
+def test_anonymous_company_is_reviewed_before_ai_cost(tmp_path: Path) -> None:
+    repo = BossLeadRepository(tmp_path / "leads.db")
+    repo.initialize()
+    anonymous = parse_boss_export(
+        _list_file(
+            [
+                _job(
+                    "anonymous",
+                    boss_name="某知名企业",
+                    jd=JD,
+                )
+            ]
+        )
+    )[0]
+    repo.import_leads([anonymous])
+    result = repo.list_leads(_profile())[0]
+    assert result["category"] == "review"
+    assert result["companyIdentified"] is False
+    assert result["aiScreenable"] is False
+
+
+def test_platform_api_keeps_leads_out_of_official_jobs(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     config = tmp_path / "config.yaml"
     config.write_text(
         """app:
@@ -136,8 +232,8 @@ crawler:
   request_delay_max_seconds: 0
   user_agent: Test browser
 llm:
-  provider: deepseek
-  model: test-model
+  provider: mimo
+  model: mimo-test
 smtp:
   enabled: false
 candidate:
@@ -163,6 +259,53 @@ companies:
         lead = client.get("/api/platform-leads").json()[0]
         assert lead["category"] == "priority"
         assert client.get("/api/jobs").json() == []
+        assert (
+            client.post(f"/api/platform-leads/{lead['id']}/ai-screen", json={}).status_code == 422
+        )
+        gateway_calls: list[str] = []
+
+        class FakeGateway:
+            def generate(self, response_model, system_prompt: str, user_prompt: str):
+                gateway_calls.append(user_prompt)
+                assert response_model is BossAIResult
+                return BossAIResult(
+                    eligibility="eligible",
+                    fit="strong",
+                    action="prioritize",
+                    confidence="medium",
+                    summary="学历与方向有明确匹配证据。",
+                    eligibility_checks=[
+                        {
+                            "requirement": "本科",
+                            "verdict": "met",
+                            "job_quote": "本科",
+                            "candidate_quote": "普通本科",
+                        }
+                    ],
+                    matched_evidence=["Python"],
+                    gaps=[],
+                    next_step="打开原始 BOSS 页面核对投递入口。",
+                )
+
+        monkeypatch.setattr(
+            api_platform_leads, "CompatibleApplicationGateway", lambda _config: FakeGateway()
+        )
+        ai_url = f"/api/platform-leads/{lead['id']}/ai-screen"
+        assert client.post(ai_url, json={"confirmed": True}).json()["cached"] is False
+        assert client.post(ai_url, json={"confirmed": True}).json()["cached"] is True
+        assert len(gateway_calls) == 1
+        assert client.get("/api/platform-leads").json()[0]["aiResult"]["eligibility"] == "eligible"
+        assert client.get("/api/platform-leads/preferences").json()["currentStudent"] is None
+        assert (
+            client.put(
+                "/api/platform-leads/preferences",
+                json={"currentStudent": False, "acceptInternship": False},
+            ).status_code
+            == 200
+        )
+        after_preference_change = client.get("/api/platform-leads").json()[0]
+        assert after_preference_change["aiNeedsRefresh"]
+        assert after_preference_change["aiResult"] is None
         assert (
             client.post(
                 f"/api/platform-leads/{lead['id']}/state",
