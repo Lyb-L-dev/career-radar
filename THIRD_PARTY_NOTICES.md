@@ -1,5 +1,9 @@
 # Third-Party Notices
 
+## BOSS 抓取工具
+
+Career Radar 可选调用 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper) 的已安装 CLI，通过用户登录的专用浏览器读取列表和详情。核对版本为提交 `80f0e478b050a6f11dff806745fe61429ad474d9`，上游为 MIT License（Copyright (c) 2026 eatmoreduck）。本仓库没有打包或复制上游代码；上游安装目录须保留自己的 LICENSE。
+
 Career Radar 的申请材料工作流参考了以下开源项目的工作流思想：
 
 ## AI Job Search

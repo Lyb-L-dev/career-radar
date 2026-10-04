@@ -109,7 +109,7 @@ export function CommandPalette() {
             <CommandItem key={j.id} onSelect={() => go(`/jobs/${j.id}`)}>
               <Briefcase className="size-4 text-ink-tertiary" />
               <span className="truncate">{j.title}</span>
-              <span className="ml-2 text-[12px] text-ink-tertiary truncate">{j.companyName}</span>
+              <span className="ml-2 text-[12px] text-ink-tertiary truncate">企业招聘页 · {j.companyName}</span>
             </CommandItem>
           ))}
         </CommandGroup>

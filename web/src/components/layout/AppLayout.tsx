@@ -21,6 +21,7 @@ function usePageTitle(): string {
   if (pathname === '/') return '总览'
   if (pathname.startsWith('/jobs/')) return '岗位详情'
   if (pathname.startsWith('/jobs')) return '岗位中心'
+  if (pathname.startsWith('/platform-leads')) return '岗位中心'
   if (pathname.startsWith('/companies/')) return '企业详情'
   if (pathname.startsWith('/companies')) return '企业监控'
   if (pathname.startsWith('/runs/')) return '运行详情'

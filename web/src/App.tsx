@@ -1,12 +1,11 @@
 import { lazy, Suspense } from 'react'
-import { Routes, Route } from 'react-router'
+import { Navigate, Routes, Route } from 'react-router'
 import AppLayout from '@/components/layout/AppLayout'
 import { PageSkeleton } from '@/components/common/StateViews'
 
 const OnboardingPage = lazy(() => import('@/pages/Onboarding'))
 const DashboardPage = lazy(() => import('@/pages/Dashboard'))
-const JobsPage = lazy(() => import('@/pages/Jobs'))
-const PlatformLeadsPage = lazy(() => import('@/pages/PlatformLeads'))
+const JobHubPage = lazy(() => import('@/pages/JobHub'))
 const JobDetailPage = lazy(() => import('@/pages/JobDetail'))
 const CompaniesPage = lazy(() => import('@/pages/Companies'))
 const CompanyCandidatesPage = lazy(() => import('@/pages/CompanyCandidates'))
@@ -30,8 +29,8 @@ export default function App() {
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route element={<AppLayout />}>
           <Route path="/" element={<DashboardPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/platform-leads" element={<PlatformLeadsPage />} />
+          <Route path="/jobs" element={<JobHubPage />} />
+          <Route path="/platform-leads" element={<Navigate to="/jobs?source=boss" replace />} />
           <Route path="/jobs/:id" element={<JobDetailPage />} />
           <Route path="/applications" element={<ApplicationsPage />} />
           <Route path="/applications/:id" element={<ApplicationDetailPage />} />

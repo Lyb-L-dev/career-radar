@@ -7,6 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .application.llm import CompatibleApplicationGateway
 from .boss_ai import BossAIScreener
+from .boss_capture import (
+    BossCaptureError,
+    BossCaptureManager,
+    CaptureRequest,
+    candidate_from_verified_resume,
+    model_identity,
+)
 from .llm import LLMError
 from .platform_leads import (
     BossExportError,
@@ -40,13 +47,59 @@ class BossPreferencesPayload(BaseModel):
     acceptInternship: bool
 
 
-def _model_identity(settings) -> str:
-    llm = settings.llm
-    return f"{llm.provider}|{llm.base_url or ''}|{llm.model}|thinking={not llm.disable_thinking}"
+class BossCrawlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    keyword: str = Field(default="", max_length=40)
+    city: str = Field(default="全国", min_length=1, max_length=30)
+    pages: int = Field(default=1, ge=1, le=2)
+    maxDetails: int = Field(default=8, ge=1, le=12)
 
 
-def create_platform_leads_router(leads: BossLeadRepository, repository: WebRepository) -> APIRouter:
+def _candidate(settings):
+    try:
+        return candidate_from_verified_resume(settings)
+    except BossCaptureError:
+        return settings.candidate
+
+
+def create_platform_leads_router(
+    leads: BossLeadRepository, repository: WebRepository, capture: BossCaptureManager
+) -> APIRouter:
     router = APIRouter(prefix="/api/platform-leads", tags=["platform-leads"])
+
+    @router.get("/crawl")
+    def get_crawl_status() -> dict[str, object]:
+        return capture.status()
+
+    @router.get("/crawl/plan")
+    def get_crawl_plan(keyword: str = "") -> dict[str, object]:
+        if len(keyword) > 40 or (keyword.strip() and len(keyword.strip()) < 2):
+            raise HTTPException(422, "补充关键词需为 2–40 个字符")
+        try:
+            return capture.plan(keyword.strip())
+        except BossCaptureError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.post("/crawl/browser")
+    def open_crawl_browser() -> dict[str, bool]:
+        try:
+            return capture.open_browser()
+        except BossCaptureError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.post("/crawl")
+    def start_crawl(payload: BossCrawlPayload) -> dict[str, object]:
+        keyword = payload.keyword.strip()
+        city = payload.city.strip()
+        if (keyword and len(keyword) < 2) or not city:
+            raise HTTPException(422, "请填写有效的补充关键词和城市；城市不限可填全国")
+        try:
+            return capture.start(CaptureRequest(
+                keyword=keyword, city=city,
+                pages=payload.pages, max_details=payload.maxDetails,
+            ))
+        except BossCaptureError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @router.post("/preview")
     def preview_import(payload: BossImportPayload) -> dict[str, object]:
@@ -68,7 +121,7 @@ def create_platform_leads_router(leads: BossLeadRepository, repository: WebRepos
     @router.get("")
     def list_leads() -> list[dict[str, object]]:
         settings = repository.settings
-        return leads.list_leads(settings.candidate, _model_identity(settings))
+        return leads.list_leads(_candidate(settings), model_identity(settings))
 
     @router.get("/preferences")
     def get_preferences() -> dict[str, bool | None]:
@@ -106,7 +159,7 @@ def create_platform_leads_router(leads: BossLeadRepository, repository: WebRepos
         )
         screener = BossAIScreener(leads, lambda: CompatibleApplicationGateway(screen_config))
         try:
-            return screener.screen(lead_id, settings.candidate, _model_identity(settings))
+            return screener.screen(lead_id, _candidate(settings), model_identity(settings))
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         except ValueError as exc:

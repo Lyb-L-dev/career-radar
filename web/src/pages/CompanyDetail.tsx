@@ -298,7 +298,7 @@ export default function CompanyDetailPage() {
                   <Link to={`/jobs/${j.id}`} className="flex items-center justify-between gap-3 py-2.5 group">
                     <div className="min-w-0">
                       <p className="truncate text-[14px] text-ink group-hover:text-brand transition-colors">{j.title}</p>
-                      <p className="text-[12px] text-ink-tertiary">{j.city} · 更新于 {j.lastUpdatedAt.slice(5, 16)}</p>
+                      <p className="text-[12px] text-ink-tertiary">企业招聘页 · {j.city} · 更新于 {j.lastUpdatedAt.slice(5, 16)}</p>
                     </div>
                     <Pill tone={j.status === 'new' ? 'green' : j.status === 'updated' ? 'blue' : 'gray'}>
                       {j.status === 'new' ? '新增' : j.status === 'updated' ? '更新' : j.status === 'closed' ? '已关闭' : '已忽略'}

@@ -2,31 +2,21 @@ import { NavLink } from 'react-router'
 import {
   LayoutDashboard,
   Briefcase,
-  Compass,
   Building2,
-  LibraryBig,
   Activity,
   FileText,
-  UserRound,
-  Settings,
-  Github,
   Radar,
-  CircleCheck,
   FileUser,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const NAV_ITEMS = [
   { to: '/', label: '总览', icon: LayoutDashboard, end: true },
-  { to: '/jobs', label: '岗位中心', icon: Briefcase },
-  { to: '/platform-leads', label: '平台机会池', icon: Compass },
-  { to: '/applications', label: 'AI 申请材料', icon: FileUser },
+  { to: '/jobs', label: '岗位', icon: Briefcase },
+  { to: '/applications', label: '申请材料', icon: FileUser },
   { to: '/companies', label: '企业监控', icon: Building2 },
-  { to: '/company-candidates', label: '优质企业候选库', icon: LibraryBig },
-  { to: '/runs', label: '运行中心', icon: Activity },
-  { to: '/reports', label: '日报中心', icon: FileText },
-  { to: '/profile', label: '用户画像', icon: UserRound },
-  { to: '/settings', label: '系统设置', icon: Settings },
+  { to: '/runs', label: '运行', icon: Activity },
+  { to: '/reports', label: '日报', icon: FileText },
 ] as const
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
@@ -39,7 +29,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </span>
         <div className="leading-tight">
           <p className="text-[15px] font-semibold text-ink">Career Radar</p>
-          <p className="text-[11px] text-ink-tertiary">求职机会与岗位监控</p>
+          <p className="text-[11px] text-ink-tertiary">本地求职工作台</p>
         </div>
       </div>
 
@@ -66,23 +56,6 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
 
-      {/* 底部信息 */}
-      <div className="px-5 py-4 space-y-2.5 border-t border-black/[0.05]">
-        <div className="flex items-center gap-1.5 text-[12px] text-success">
-          <CircleCheck className="size-3.5" />
-          服务运行正常
-        </div>
-        <a
-          href="https://github.com/"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 text-[12px] text-ink-secondary hover:text-ink transition-colors"
-        >
-          <Github className="size-3.5" />
-          GitHub 项目
-        </a>
-        <p className="text-[11px] text-ink-tertiary">Career Radar v1.1.0</p>
-      </div>
     </div>
   )
 }

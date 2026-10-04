@@ -36,9 +36,11 @@ from .api_runs import create_runs_router
 from .api_wechat import create_wechat_router
 from .application_manager import ApplicationManager
 from .automation import AutomationService
+from .boss_capture import BossCaptureManager
 from .config import ConfigError, is_api_key_placeholder
 from .config_editor import mutate_config_blocks, update_config_blocks
 from .llm import create_provider
+from .local_request_guard import LocalRequestGuardMiddleware
 from .mailer import MailError, send_test_email
 from .models import CandidateProfile
 from .notifications import NotificationError, send_test_notification
@@ -352,6 +354,7 @@ def create_app(
     repository.initialize()
     platform_leads = BossLeadRepository(repository.settings.app.database_path)
     platform_leads.initialize()
+    boss_capture = BossCaptureManager(platform_leads, lambda: repository.settings, config_file.parent)
     task_coordinator = TaskCoordinator()
     run_manager = RunManager(repository, task_coordinator)
     reputation_manager = ReputationManager(repository, task_coordinator)
@@ -386,6 +389,7 @@ def create_app(
     )
     app.state.repository = repository
     app.state.platform_leads = platform_leads
+    app.state.boss_capture = boss_capture
     app.state.run_manager = run_manager
     app.state.reputation_manager = reputation_manager
     app.state.application_manager = application_manager
@@ -400,7 +404,8 @@ def create_app(
         allow_headers=["Content-Type"],
     )
     app.include_router(create_jobs_router(repository))
-    app.include_router(create_platform_leads_router(platform_leads, repository))
+    app.add_middleware(LocalRequestGuardMiddleware, allowed_origins=repository.settings.app.cors_origins)
+    app.include_router(create_platform_leads_router(platform_leads, repository, boss_capture))
     app.include_router(create_automation_router(repository, automation_service))
     app.include_router(create_applications_router(repository, application_manager))
     app.include_router(create_reputation_router(repository, reputation_manager))

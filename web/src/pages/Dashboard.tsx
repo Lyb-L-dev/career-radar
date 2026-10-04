@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Card, CardTitle } from '@/components/common/PageHeader'
+import { SourceNote } from '@/components/jobs/SourceNote'
 import { MatchBadge, DifficultyMeter, Pill } from '@/components/common/Badges'
 import { PageSkeleton, ErrorState } from '@/components/common/StateViews'
 import { useDashboardStats, useRuns } from '@/hooks/useData'
@@ -105,6 +106,7 @@ function RecommendJobCard({ job }: { job: Job }) {
         {job.highlyRecommended && <Pill tone="orange">高度推荐</Pill>}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-ink-secondary">
+        <SourceNote kind="official" site={job.source?.site} />
         <Pill tone="gray">{job.type === 'internship' ? '实习' : job.type === 'campus' ? '校招' : '全职'}</Pill>
         <span>届别 <MatchBadge level={job.gradYearMatch} /></span>
         <span>能力 <MatchBadge level={job.abilityMatch} /></span>

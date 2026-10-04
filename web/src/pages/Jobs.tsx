@@ -15,7 +15,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
   SelectContent,
@@ -39,7 +38,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { PageHeader, Card } from '@/components/common/PageHeader'
-import { MatchBadge, JobStatusBadge, DifficultyMeter, Pill } from '@/components/common/Badges'
+import { SourceNote } from '@/components/jobs/SourceNote'
+import { MatchBadge, JobStatusBadge, Pill } from '@/components/common/Badges'
 import { ListSkeleton, EmptyState, ErrorState, NoResults } from '@/components/common/StateViews'
 import { useJobs, useJobCounts, useToggleFavorite, useMarkApplied, useMarkNotInterested, useFavoriteMany, useIgnoreJobUpdate } from '@/hooks/useJobs'
 import { useCompanies } from '@/hooks/useCompanies'
@@ -68,7 +68,7 @@ const TAB_LABELS: { value: JobTab; label: string }[] = [
 
 const ALL = ALL_FILTER_VALUE
 
-export default function JobsPage() {
+export default function JobsPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const tab = jobFilterValuesFromParams(params).tab
@@ -122,6 +122,7 @@ export default function JobsPage() {
 
   useEffect(() => {
     const next = jobFilterValuesToParams(filterValues)
+    if (params.get('source') === 'official') next.set('source', 'official')
     if (next.toString() !== params.toString()) setParams(next, { replace: true })
   }, [filterValues, params, setParams])
 
@@ -225,54 +226,39 @@ export default function JobsPage() {
     </DropdownMenu>
   )
 
+  const listActions = (
+    <>
+      <Button variant="outline" onClick={() => exportJobs(jobs ?? [], '筛选结果')}>
+        <Download className="size-4" />导出结果
+      </Button>
+      <Button variant="outline" onClick={() => { void refetch(); toast.success('岗位列表已刷新') }} disabled={isFetching}>
+        <RefreshCw className={cn('size-4', isFetching && 'animate-spin')} />刷新
+      </Button>
+    </>
+  )
+
   return (
     <div className="space-y-5">
-      <PageHeader
+      {embedded ? <div className="flex justify-end gap-2">{listActions}</div> : <PageHeader
         title="岗位中心"
         subtitle="查看新岗位、岗位变化以及与个人画像的匹配情况"
-        actions={
-          <>
-            <Button
-              variant="outline"
-              onClick={() => exportJobs(jobs ?? [], '筛选结果')}
-            >
-              <Download className="size-4" />
-              导出当前结果
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                refetch()
-                toast.success('岗位列表已刷新')
-              }}
-              disabled={isFetching}
-            >
-              <RefreshCw className={cn('size-4', isFetching && 'animate-spin')} />
-              刷新岗位
-            </Button>
-          </>
-        }
-      />
+        actions={listActions}
+      />}
 
-      {/* 标签页 */}
-      <Tabs
-        value={tab}
-        onValueChange={(v) => {
-          setParams(jobFilterValuesToParams({ ...filterValues, tab: v as JobTab }))
+      <div className="flex items-center gap-3">
+        <label htmlFor="official-job-view" className="text-sm font-medium text-ink-secondary">查看</label>
+        <Select value={tab} onValueChange={(value) => {
+          const next = jobFilterValuesToParams({ ...filterValues, tab: value as JobTab })
+          next.set('source', 'official')
+          setParams(next)
           setSelected(new Set())
-        }}
-      >
-        <TabsList className="bg-surface shadow-card h-11 rounded-lg p-1">
-          {TAB_LABELS.map((t) => (
-            <TabsTrigger key={t.value} value={t.value} className="rounded-md px-4 data-[state=active]:bg-brand-soft data-[state=active]:text-brand-foreground data-[state=active]:shadow-none">
-              {t.label}
-              <span className="ml-1.5 text-[12px] text-ink-tertiary data-[state=active]:text-brand-foreground">
-                {counts?.[t.value] ?? '–'}
-              </span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+        }}>
+          <SelectTrigger id="official-job-view" className="w-44 bg-surface"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {TAB_LABELS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label} · {counts?.[item.value] ?? '–'}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
 
       {/* 搜索筛选 */}
       <Card padded={false} className="p-4 space-y-3">
@@ -285,7 +271,9 @@ export default function JobsPage() {
             className="pl-9 h-10 rounded-lg bg-surface-subtle border-black/[0.06]"
           />
         </div>
-        <div className="flex flex-wrap items-center gap-2.5">
+        <details className="group">
+          <summary className="w-fit cursor-pointer text-sm font-medium text-brand-foreground">高级筛选{companyId !== ALL || companyType !== ALL || industryCategory !== ALL || province !== ALL || city !== ALL || jobType !== ALL || ability !== ALL || maxDifficulty !== ALL ? ' · 已启用' : ''}</summary>
+        <div className="mt-3 flex flex-wrap items-center gap-2.5">
           <Select value={companyId} onValueChange={setCompanyId}>
             <SelectTrigger className="w-44 h-9 rounded-lg"><SelectValue placeholder="企业" /></SelectTrigger>
             <SelectContent>
@@ -375,6 +363,7 @@ export default function JobsPage() {
             保存筛选条件
           </Button>
         </div>
+        </details>
       </Card>
 
       {/* 批量操作条 */}
@@ -466,12 +455,11 @@ export default function JobsPage() {
                   />
                 </TableHead>
                 <TableHead>职位</TableHead>
+                <TableHead className="hidden lg:table-cell">来源</TableHead>
                 <TableHead className="hidden lg:table-cell">企业</TableHead>
                 <TableHead className="hidden md:table-cell">地点</TableHead>
                 <TableHead>匹配度</TableHead>
-                <TableHead className="hidden md:table-cell">难度</TableHead>
                 <TableHead className="hidden sm:table-cell">状态</TableHead>
-                <TableHead className="hidden xl:table-cell">更新时间</TableHead>
                 <TableHead className="w-24 text-right pr-4">操作</TableHead>
               </TableRow>
             </TableHeader>
@@ -492,23 +480,25 @@ export default function JobsPage() {
                         {job.isFavorite && <Star className="size-3.5 shrink-0 fill-highlight text-highlight" />}
                         {job.isApplied && <Pill tone="blue">已投递</Pill>}
                         {job.type === 'notice' && <Pill tone="blue">官方通知</Pill>}
+                        {job.type !== 'notice' && job.abilityMatch === 'unknown' && <Pill tone="amber">待评估</Pill>}
                       </span>
                       {job.recommendReason && (
                         <span className="mt-0.5 block truncate text-[12px] text-ink-tertiary">{job.recommendReason}</span>
                       )}
+                      <span className="mt-1 block lg:hidden"><SourceNote kind="official" site={job.source?.site} /></span>
                     </Link>
                   </TableCell>
+                  <TableCell className="hidden lg:table-cell"><SourceNote kind="official" site={job.source?.site} /></TableCell>
                   <TableCell className="hidden lg:table-cell text-[13px] text-ink-body">{job.companyName}</TableCell>
                   <TableCell className="hidden md:table-cell text-[13px] text-ink-body">{job.city}</TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-1">
                       <MatchBadge level={job.abilityMatch} />
                       <span className="text-[11px] text-ink-tertiary">届别 {MATCH_LEVEL_LABEL[job.gradYearMatch]}</span>
+                      <span className="text-[11px] text-ink-tertiary">难度 {job.abilityMatch === 'unknown' ? '待评估' : `${job.difficulty}/10`}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="hidden md:table-cell"><DifficultyMeter value={job.difficulty} /></TableCell>
                   <TableCell className="hidden sm:table-cell"><JobStatusBadge status={job.status} /></TableCell>
-                  <TableCell className="hidden xl:table-cell text-[12px] text-ink-tertiary tabular-nums">{job.lastUpdatedAt.slice(5, 16)}</TableCell>
                   <TableCell className="pr-4">
                     <div className="flex items-center justify-end gap-0.5">
                       <Button

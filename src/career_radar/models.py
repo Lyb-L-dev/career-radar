@@ -152,6 +152,7 @@ class CandidateProfile(BaseModel):
     skills: list[str] = Field(default_factory=list)
     projects: list[str] = Field(default_factory=list)
     internships: list[str] = Field(default_factory=list)
+    has_work_experience: bool | None = None
     target_roles: list[str] = Field(default_factory=list)
     preferred_locations: list[str] = Field(default_factory=list)
     salary_range_k: list[int] = Field(default_factory=lambda: [3, 40], min_length=2, max_length=2)

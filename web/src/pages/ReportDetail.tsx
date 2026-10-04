@@ -22,6 +22,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Card, CardTitle } from '@/components/common/PageHeader'
+import { SourceNote } from '@/components/jobs/SourceNote'
 import { MatchBadge, JobStatusBadge, DifficultyMeter, Pill } from '@/components/common/Badges'
 import { PageSkeleton, ErrorState, EmptyState } from '@/components/common/StateViews'
 import { useReport } from '@/hooks/useData'
@@ -40,7 +41,7 @@ function JobLine({ job, highlight }: { job: Job; highlight?: boolean }) {
             {highlight && <Pill tone="orange">高度推荐</Pill>}
           </p>
           <p className="text-[12px] text-ink-tertiary">
-            {job.companyName} · {job.city} · {JOB_TYPE_LABEL[job.type]} · 难度 {job.difficulty}/10
+            企业招聘页 · {job.companyName} · {job.city} · {JOB_TYPE_LABEL[job.type]} · 难度 {job.difficulty}/10
           </p>
         </div>
         <MatchBadge level={job.abilityMatch} />
@@ -226,7 +227,7 @@ export default function ReportDetailPage() {
                 <TableBody>
                   {tableJobs.map((j) => (
                     <TableRow key={j.id} className="cursor-pointer" onClick={() => navigate(`/jobs/${j.id}`)}>
-                      <TableCell className="max-w-[220px] truncate font-medium text-ink">{j.title}</TableCell>
+                      <TableCell className="max-w-[220px] font-medium text-ink"><span className="block truncate">{j.title}</span><SourceNote kind="official" site={j.source?.site} /></TableCell>
                       <TableCell className="text-[13px]">{j.companyName}</TableCell>
                       <TableCell className="text-[13px]">{j.city}</TableCell>
                       <TableCell className="text-[13px]">{JOB_TYPE_LABEL[j.type]}</TableCell>

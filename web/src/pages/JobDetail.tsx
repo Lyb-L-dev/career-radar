@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Card, CardTitle } from '@/components/common/PageHeader'
+import { SourceNote } from '@/components/jobs/SourceNote'
 import { MatchBadge, JobStatusBadge, DifficultyMeter, Pill } from '@/components/common/Badges'
 import { PageSkeleton, ErrorState, EmptyState } from '@/components/common/StateViews'
   import { ReputationCard } from '@/components/jobs/ReputationCard'
@@ -135,7 +136,7 @@ function SimilarJobsCard({ jobId }: { jobId: string }) {
                 </Pill>
               </div>
               <p className="mt-0.5 truncate text-[12px] text-ink-tertiary">
-                {item.companyName} · {item.city}
+                企业招聘页 · {item.companyName} · {item.city}
               </p>
             </Link>
           </li>
@@ -205,6 +206,7 @@ export default function JobDetailPage() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-[24px] font-semibold text-ink">{job.title}</h1>
+              <SourceNote kind="official" site={job.source?.site} />
               <JobStatusBadge status={job.status} />
               {job.highlyRecommended && <Pill tone="orange">高度推荐</Pill>}
             </div>

@@ -1,6 +1,6 @@
 # Career Radar：企业官网招聘信息自动监控与完整 JD 提取
 
-> BOSS 直聘职位可通过独立的[平台机会池](BOSS_OPPORTUNITIES.md)导入并用小米 MiMo 二次筛选；平台机会与官网核实岗位分别保存。
+> [岗位页面](http://127.0.0.1:8000/jobs)统一展示官网与 BOSS 线索，并标明来源。BOSS 支持按简历多方向抓取和小米 MiMo 筛选，使用说明见 [BOSS_OPPORTUNITIES.md](BOSS_OPPORTUNITIES.md)。
 
 Career Radar 面向校招求职者：每天访问你配置的企业公开官网，智能寻找招聘入口和职位详情页，用 LLM 提取完整 JD，利用 SQLite 去重/检测变化，并输出 Markdown、CSV 和可选邮件提醒。项目同时提供本地 FastAPI 与 React 管理端，可直接查看真实画像、岗位、企业、运行、日报和通知数据。
 
@@ -149,6 +149,8 @@ cd E:\AIProjects\work\career-radar
 ```
 
 浏览器打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。接口文档位于 [http://127.0.0.1:8000/api/docs](http://127.0.0.1:8000/api/docs)。也可以执行：
+
+同一个服务提供官网岗位和 BOSS 线索，无需第二个 Career Radar 启动命令。在岗位页选择 BOSS 来源，点击“获取岗位”可抓取、导入 JSON 或调整求职身份。页面默认隐藏已排除岗位，来源日期的解释可悬停查看。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\AIProjects\work\career-radar\scripts\run_web_windows.ps1"

@@ -4,6 +4,7 @@ import { Search, Briefcase, Building2, FileText, Activity } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { PageHeader, Card, CardTitle } from '@/components/common/PageHeader'
+import { SourceNote } from '@/components/jobs/SourceNote'
 import { MatchBadge, RunStatusBadge, Pill, CompanyStatusBadge } from '@/components/common/Badges'
 import { ListSkeleton, NoResults } from '@/components/common/StateViews'
 import { useGlobalSearch } from '@/hooks/useData'
@@ -60,7 +61,7 @@ export default function SearchResultsPage() {
                     <Link to={`/jobs/${j.id}`} className="flex items-center justify-between gap-3 py-2.5 group">
                       <div className="min-w-0">
                         <p className="truncate text-[14px] font-medium text-ink group-hover:text-brand transition-colors">{j.title}</p>
-                        <p className="text-[12px] text-ink-tertiary">{j.companyName} · {j.city} · 难度 {j.difficulty}/10</p>
+                        <p className="flex flex-wrap items-center gap-1.5 text-[12px] text-ink-tertiary"><SourceNote kind="official" site={j.source?.site} />{j.companyName} · {j.city} · 难度 {j.difficulty}/10</p>
                       </div>
                       <MatchBadge level={j.abilityMatch} />
                     </Link>

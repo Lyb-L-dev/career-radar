@@ -38,6 +38,10 @@ _FOCUS = (
 )
 _AI_CONTEXT = ("人工智能", "大模型", "llm", "agent", "智能体", "ai应用", "ai 应用")
 _ENGINEERING = ("开发", "研发", "工程", "python", "编程", "代码", "api", "部署", "系统集成")
+_RESUME_TECH_ROLE = re.compile(
+    r"python|后端|服务端|数据开发|大数据|数据工程|数据分析|商业智能|bi开发|测试开发|自动化测试|全栈|机器学习|算法应用|软件开发|数字化研发|数据平台|流式计算",
+    re.I,
+)
 _EARLY = ("应届", "校招", "校园", "在校", "实习", "毕业生")
 _JUNIOR = ("经验不限", "不限经验", "1年以内", "一年以内", "0-1年", "0—1年")
 _SENIOR = re.compile(r"(?:3\s*[-~—至]\s*5|[3-9]\s*年(?:以上|及以上)|至少\s*[3-9]\s*年)")
@@ -111,15 +115,17 @@ def _field(raw: dict[str, Any], *keys: str, limit: int = 20_000) -> str:
 
 
 def _external_id(raw: dict[str, Any]) -> str:
-    value = _field(raw, "job_id", "encrypt_job_id", "encryptJobId", limit=256)
-    if value and _JOB_ID.fullmatch(value):
-        return value
+    # 上游 scraper 的 job_id 是链接的 MD5 摘要，不是 BOSS 页面真实 ID。
+    # 有可信原始链接时必须先从链接取 ID，才能生成可打开的职位来源地址。
     link = _field(raw, "job_link", "link", "source_url", limit=1000)
     parts = urlsplit(link)
     if parts.scheme == "https" and parts.hostname in _BOSS_HOSTS:
         match = _JOB_PATH.fullmatch(parts.path)
         if match:
             return match.group(1)
+    value = _field(raw, "encrypt_job_id", "encryptJobId", "job_id", limit=256)
+    if value and _JOB_ID.fullmatch(value):
+        return value
     return ""
 
 
@@ -194,7 +200,7 @@ def triage_boss_lead(
     title = lead.title.casefold()
     detail = lead.description.casefold()
     tags = lead.tags.casefold()
-    combined = f"{title} {detail}"
+    combined = f"{title} {detail} {tags}"
     reasons: list[str] = []
     blockers: list[str] = []
     score = 0
@@ -205,6 +211,9 @@ def triage_boss_lead(
     if focus_title:
         score += 30
         reasons.append("职位名称符合 AI 应用或 FDE 方向")
+    elif _RESUME_TECH_ROLE.search(title):
+        score += 25
+        reasons.append("职位名称属于后端、数据、测试或全栈等技术方向")
     elif ai_title and engineering:
         score += 22
         reasons.append("职位名称和职责包含 AI 工程内容")
@@ -232,9 +241,9 @@ def triage_boss_lead(
         blockers.append("平台经验标签要求多年工作经验")
     grad_years = {int(value) for value in _EXPLICIT_GRAD_YEAR.findall(lead.description)}
     grad_years.update(
-        int(value) for value in _GRAD_COHORT.findall(f"{lead.title} {lead.description}")
+        int(value) for value in _GRAD_COHORT.findall(f"{lead.title} {lead.description} {lead.tags}")
     )
-    for first, second in _GRAD_YEAR_RANGE.findall(f"{lead.title} {lead.description}"):
+    for first, second in _GRAD_YEAR_RANGE.findall(f"{lead.title} {lead.description} {lead.tags}"):
         grad_years.update((int(first), int(second)))
     if grad_years and profile.graduation_year not in grad_years:
         blockers.append(

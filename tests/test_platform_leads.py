@@ -51,6 +51,9 @@ def test_boss_export_accepts_list_and_detail_and_rejects_bad_identity() -> None:
     details = parse_boss_export(json.dumps([_job(job_id="", job_link=summary[0].source_url)]))
     assert details[0].external_id == "abc123"
 
+    surrogate = _job(job_id="a1b2c3d4e5f6a7b8", job_link=summary[0].source_url)
+    assert parse_boss_export(_list_file([surrogate]))[0].external_id == "abc123"
+
     try:
         parse_boss_export(
             _list_file([_job(job_id="", job_link="https://evil.example/job_detail/x.html")])
@@ -247,6 +250,20 @@ companies:
         encoding="utf-8",
     )
     with TestClient(create_app(config, web_dist=tmp_path / "missing")) as client:
+        assert client.get("/api/platform-leads/crawl").json()["state"] == "idle"
+        monkeypatch.setattr(
+            client.app.state.boss_capture,
+            "plan",
+            lambda _keyword="": {"searches": [{"family": "数据开发", "keyword": "数据开发"}], "resumeProjectCount": 3},
+        )
+        assert client.get("/api/platform-leads/crawl/plan").json()["searches"][0]["family"] == "数据开发"
+        assert client.post("/api/platform-leads/crawl", json={"keyword": "AI应用开发"}).status_code == 422
+        assert client.post("/api/platform-leads/crawl", json={"keyword": "  "}).status_code == 422
+        monkeypatch.setattr(client.app.state.boss_capture, "open_browser", lambda: {"ready": True})
+        assert client.post("/api/platform-leads/crawl/browser").json() == {"ready": True}
+        assert client.post(
+            "/api/platform-leads/crawl/browser", headers={"Origin": "https://external.example"}
+        ).status_code == 403
         content = _list_file([_job()])
         assert client.post("/api/platform-leads/preview", json={"content": content}).json() == {
             "total": 1,
