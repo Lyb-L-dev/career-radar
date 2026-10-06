@@ -11,7 +11,7 @@ from .application.document_renderer import ApplicationDocumentRenderer
 from .application.document_verifier import ApplicationDocumentVerifier
 from .application.document_workflow import ApplicationDocumentWorkflow
 from .application.evaluator import JobApplicationEvaluator
-from .application.llm import DeepSeekApplicationGateway
+from .application.llm import CompatibleApplicationGateway
 from .application.models import ApplicationRun, ApplicationStatus
 from .application.repository import ApplicationRepository
 from .application.service import ApplicationService
@@ -91,7 +91,7 @@ class ApplicationManager:
         settings,
         repository: ApplicationRepository,
     ) -> ApplicationWorkflow:
-        gateway = DeepSeekApplicationGateway(settings.llm)
+        gateway = CompatibleApplicationGateway(settings.llm)
         return ApplicationWorkflow(
             repository,
             JobApplicationEvaluator(gateway),
@@ -233,7 +233,7 @@ class ApplicationManager:
         repository = None
         try:
             settings, repository, _service = self._dependencies()
-            resources = {"document"} if action == "document" else {"deepseek"}
+            resources = {"document"} if action == "document" else {"llm"}
             if action == "content":
                 resources.add("document")
             with self.coordinator.acquire(

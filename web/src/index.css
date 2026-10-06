@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Growth actions use the existing darker blue for readable white labels. */
+.growth-surface {
+  --primary: 218 89% 41%;
+}
+
 @layer base {
   :root {
     /* Career Radar 色板（浅色模式） */
@@ -11,7 +16,7 @@
     --card-foreground: 240 3% 12%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 3% 12%;
-    --primary: 215 100% 54%;            /* Career Blue #1677FF */
+    --primary: 218 89% 41%;             /* readable action blue */
     --primary-foreground: 0 0% 100%;
     --secondary: 240 11% 96%;
     --secondary-foreground: 240 3% 12%;
@@ -22,7 +27,7 @@
     --destructive: 4 74% 49%;           /* 错误 #D92D20 */
     --destructive-foreground: 0 0% 100%;
     --border: 240 6% 91%;
-    --input: 240 6% 91%;
+    --input: 240 2% 56%;
     --ring: 215 100% 54%;
     --radius: 0.625rem;                 /* 控件基准 10px */
     --sidebar-background: 0 0% 100%;
@@ -80,6 +85,20 @@
   }
   h1, h2, h3, h4 {
     @apply leading-[1.3];
+  }
+  main, main > *, .grid > *, .flex > * { min-width: 0; }
+  main { overflow-wrap: anywhere; }
+  :focus-visible { outline: 2px solid #0B4FC4; outline-offset: 3px; }
+  summary { min-height: 28px; }
+  .reading-copy { max-width: 48rem; font-size: 1rem; line-height: 1.75; overflow-wrap: anywhere; }
+  .reading-copy pre { max-width: 100%; }
+  @media (max-width: 767px) {
+    button, [role="button"] { min-height: 44px; }
+    input, textarea { font-size: 16px; }
+    summary { min-height: 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
   }
   ::selection {
     background: hsl(var(--accent));

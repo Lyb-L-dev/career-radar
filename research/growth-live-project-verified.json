@@ -1,0 +1,296 @@
+{
+  "timestamp": "2026-10-05T21:48:27.072948+08:00",
+  "provider": "mimo",
+  "model": "mimo-v2.6-pro",
+  "outputTokenLimit": 6000,
+  "syntheticData": true,
+  "productionDatabaseWritten": false,
+  "cases": [
+    {
+      "name": "project_no_execution",
+      "ok": true,
+      "points": [
+        {
+          "answerQuote": "POST 接收 JSON 数据，缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+          "passed": true,
+          "pointId": "request",
+          "reason": "解释了接收payload并按条件返回400/201响应，符合Request/Response证据要求。"
+        },
+        {
+          "answerQuote": "POST 接收 JSON 数据",
+          "passed": true,
+          "pointId": "methods",
+          "reason": "对POST处理JSON内容有具体说明；按标准不要求补造GET。"
+        },
+        {
+          "answerQuote": "缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+          "passed": true,
+          "pointId": "status",
+          "reason": "材料实际出现的400、201含义解释正确，符合至少一个实际状态码的要求。"
+        },
+        {
+          "answerQuote": "JSONResponse 设置 JSON 媒体类型",
+          "passed": true,
+          "pointId": "headers",
+          "reason": "明确说明响应的JSON媒体类型用途，构成Headers证据，无需额外头部例子。"
+        },
+        {
+          "answerQuote": "这段代码没有实现 Cookie 或 Session。",
+          "passed": false,
+          "pointId": "session",
+          "reason": "明确声明未实现，不构成Cookie/Session机制的真实材料或具体解释。"
+        }
+      ],
+      "feedback": "代码清楚展示了请求参数获取、缺失name的400错误分支和201创建成功响应，方法用途、状态码含义和JSONResponse设置JSON媒体类型的解释都与材料一致。Cookie/Session只说明未实现，按标准不构成通过证据，作为本次缺口。未实际运行，不作系统验证声明。",
+      "followup": {
+        "answered": false,
+        "assisted": false,
+        "code": "if not payload.get('name'):\n    return JSONResponse(status_code=400, content={'error': 'missing name'})",
+        "expectedAnswer": "缺少name时返回400，表示客户端请求不合法；字段校验通过后返回201，表示资源创建成功。",
+        "followupDepth": 0,
+        "id": "f9991de58d504e9fbc9cae2de21c2ab1",
+        "mode": "implementation",
+        "pointIds": [
+          "status"
+        ],
+        "rubricVersion": "growth-rubric-v1",
+        "skillId": "http",
+        "text": "这段代码里，缺少 name 的请求分支和创建成功分支分别返回什么状态码？为什么这样选择？"
+      },
+      "verification": "用户提交、模型审阅；系统未执行代码",
+      "hasRunRecord": false,
+      "runResultQuote": "",
+      "requiresManualQualityReview": true,
+      "seconds": 12.67,
+      "calls": [
+        {
+          "seconds": 12.32,
+          "usage": {
+            "completion_tokens": 433,
+            "prompt_tokens": 1848,
+            "total_tokens": 2281,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1792
+            }
+          },
+          "finishReason": "stop"
+        }
+      ],
+      "outputs": [
+        {
+          "task": "project_review",
+          "result": {
+            "feedback": "代码清楚展示了请求参数获取、缺失name的400错误分支和201创建成功响应，方法用途、状态码含义和JSONResponse设置JSON媒体类型的解释都与材料一致。Cookie/Session只说明未实现，按标准不构成通过证据，作为本次缺口。未实际运行，不作系统验证声明。",
+            "points": [
+              {
+                "pointId": "request",
+                "passed": true,
+                "answerQuote": "POST 接收 JSON 数据，缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+                "reason": "解释了接收payload并按条件返回400/201响应，符合Request/Response证据要求。"
+              },
+              {
+                "pointId": "methods",
+                "passed": true,
+                "answerQuote": "POST 接收 JSON 数据",
+                "reason": "对POST处理JSON内容有具体说明；按标准不要求补造GET。"
+              },
+              {
+                "pointId": "status",
+                "passed": true,
+                "answerQuote": "缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+                "reason": "材料实际出现的400、201含义解释正确，符合至少一个实际状态码的要求。"
+              },
+              {
+                "pointId": "headers",
+                "passed": true,
+                "answerQuote": "JSONResponse 设置 JSON 媒体类型",
+                "reason": "明确说明响应的JSON媒体类型用途，构成Headers证据，无需额外头部例子。"
+              },
+              {
+                "pointId": "session",
+                "passed": false,
+                "answerQuote": "这段代码没有实现 Cookie 或 Session。",
+                "reason": "明确声明未实现，不构成Cookie/Session机制的真实材料或具体解释。"
+              }
+            ],
+            "question": {
+              "text": "这段代码里，缺少 name 的请求分支和创建成功分支分别返回什么状态码？为什么这样选择？",
+              "code": "if not payload.get('name'):\n        return JSONResponse(status_code=400, content={'error': 'missing name'})",
+              "pointIds": [
+                "status"
+              ],
+              "expectedAnswer": "缺少name时返回400，表示客户端请求不合法；字段校验通过后返回201，表示资源创建成功。",
+              "mode": "implementation"
+            },
+            "runResultQuote": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "project_submitted_result",
+      "ok": true,
+      "points": [
+        {
+          "answerQuote": "POST 接收 JSON 数据，缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+          "passed": true,
+          "pointId": "request",
+          "reason": "材料展示了接收payload并返回JSONResponse，配合解释说明了请求与响应处理。"
+        },
+        {
+          "answerQuote": "POST 接收 JSON 数据",
+          "passed": true,
+          "pointId": "methods",
+          "reason": "单一POST接口的用途说明具体且正确，按项目标准不要求补GET。"
+        },
+        {
+          "answerQuote": "缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+          "passed": true,
+          "pointId": "status",
+          "reason": "材料中实际出现的400和201含义解释正确，覆盖至少一个状态码即可。"
+        },
+        {
+          "answerQuote": "JSONResponse 设置 JSON 媒体类型",
+          "passed": true,
+          "pointId": "headers",
+          "reason": "说明了Content-Type/媒体类型用途，符合参考说明中对JSONResponse自动设置响应头的界定。"
+        },
+        {
+          "answerQuote": "这段代码没有实现 Cookie 或 Session。",
+          "passed": false,
+          "pointId": "session",
+          "reason": "明确未实现不是通过证据，材料中无Cookie/Session机制或具体解释。"
+        }
+      ],
+      "feedback": "代码展示了POST接收JSON payload并返回JSON响应，状态码400/201含义解释正确，媒体类型说明构成Headers证据；runRecord记录了pytest结果。缺口是Cookie/Session未实现且未解释机制，明确未实现不构成通过证据。追问只核对现有错误分支的设计意图。",
+      "followup": {
+        "answered": false,
+        "assisted": false,
+        "code": "if not payload.get('name'):\n    return JSONResponse(status_code=400, content={'error': 'missing name'})",
+        "expectedAnswer": "缺少name属于客户端请求不合法，因此返回400表示请求错误，而不是成功创建后的201；payload: dict意味着未做字段类型约束，get('name')只检查存在性和真值，name为空字符串也会被当作缺失返回400。运行记录只是测试结果，不代表未讨论的分支已验证。",
+        "followupDepth": 0,
+        "id": "b061bebf666747e1b43b273a27ee76f8",
+        "mode": "implementation",
+        "pointIds": [
+          "status",
+          "methods"
+        ],
+        "rubricVersion": "growth-rubric-v1",
+        "skillId": "http",
+        "text": "代码里缺少name时返回400并给出{'error': 'missing name'}，而运行记录显示测试通过。请说明为什么这里选择400而不是201，以及payload为dict类型对这段校验逻辑的实际影响（按现有代码意图说明，不需要改写或新增功能）。"
+      },
+      "verification": "用户提交、模型审阅；系统未执行代码",
+      "hasRunRecord": true,
+      "runResultQuote": "pytest: 3 passed in 0.12s，缺少name返回400，创建成功201，Content-Type为application/json。",
+      "requiresManualQualityReview": true,
+      "seconds": 27.17,
+      "calls": [
+        {
+          "seconds": 10.71,
+          "usage": {
+            "completion_tokens": 520,
+            "prompt_tokens": 1872,
+            "total_tokens": 2392,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1792
+            }
+          },
+          "finishReason": "stop"
+        },
+        {
+          "seconds": 14.96,
+          "usage": {
+            "completion_tokens": 602,
+            "prompt_tokens": 1872,
+            "total_tokens": 2474,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1792
+            }
+          },
+          "finishReason": "stop"
+        }
+      ],
+      "outputs": [
+        {
+          "task": "project_review",
+          "result": {
+            "feedback": "代码展示了POST接收JSON payload并返回JSON响应，状态码400/201含义解释正确，媒体类型说明构成Headers证据；runRecord记录了pytest结果。缺口是Cookie/Session未实现且未解释机制，明确未实现不构成通过证据。追问只核对现有错误分支的设计意图。",
+            "points": [
+              {
+                "pointId": "request",
+                "passed": true,
+                "answerQuote": "POST 接收 JSON 数据，缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+                "reason": "材料展示了接收payload并返回JSONResponse，配合解释说明了请求与响应处理。"
+              },
+              {
+                "pointId": "methods",
+                "passed": true,
+                "answerQuote": "POST 接收 JSON 数据",
+                "reason": "单一POST接口的用途说明具体且正确，按项目标准不要求补GET。"
+              },
+              {
+                "pointId": "status",
+                "passed": true,
+                "answerQuote": "缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+                "reason": "材料中实际出现的400和201含义解释正确，覆盖至少一个状态码即可。"
+              },
+              {
+                "pointId": "headers",
+                "passed": true,
+                "answerQuote": "JSONResponse 设置 JSON 媒体类型",
+                "reason": "说明了Content-Type/媒体类型用途，符合参考说明中对JSONResponse自动设置响应头的界定。"
+              },
+              {
+                "pointId": "session",
+                "passed": false,
+                "answerQuote": "这段代码没有实现 Cookie 或 Session。",
+                "reason": "明确未实现不是通过证据，材料中无Cookie/Session机制或具体解释。"
+              }
+            ],
+            "question": {
+              "text": "代码里缺少name时返回400并给出{'error': 'missing name'}，而运行记录显示测试通过。请说明为什么这里选择400而不是201，以及payload为dict类型对这段校验逻辑的实际影响（按现有代码意图说明，不需要改写或新增功能）。",
+              "code": "    if not payload.get('name'):\n        return JSONResponse(status_code=400, content={'error': 'missing name'})",
+              "pointIds": [
+                "status",
+                "methods"
+              ],
+              "expectedAnswer": "缺少name属于客户端请求不合法，因此返回400表示请求错误，而不是成功创建后的201；payload: dict意味着未做字段类型约束，get('name')只检查存在性和真值，name为空字符串也会被当作缺失返回400。运行记录只是测试结果，不代表未讨论的分支已验证。",
+              "mode": "implementation"
+            },
+            "runResultQuote": "pytest: 3 passed in 0.12s，缺少name返回400，创建成功201，Content-Type为application/json。"
+          }
+        }
+      ]
+    }
+  ],
+  "totalCalls": 3,
+  "totalTokens": 7147,
+  "casesPassed": 2,
+  "casesTotal": 2,
+  "gradingLabelsCorrect": 0,
+  "gradingLabelsTotal": 0
+}

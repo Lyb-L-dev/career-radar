@@ -1,5 +1,6 @@
+import { safeJobsReturn, formatLocalTime } from '@/lib/browserState'
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import {
   ArrowLeft,
@@ -8,7 +9,6 @@ import {
   Send,
   ExternalLink,
   CheckCircle2,
-  XCircle,
   CircleHelp,
   ShieldCheck,
   Sparkles,
@@ -26,7 +26,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Card, CardTitle } from '@/components/common/PageHeader'
+import { OfficialAssessmentPanel } from '@/components/jobs/OfficialAssessment'
 import { SourceNote } from '@/components/jobs/SourceNote'
+import { GrowthTargetButton } from '@/components/GrowthSummary'
 import { MatchBadge, JobStatusBadge, DifficultyMeter, Pill } from '@/components/common/Badges'
 import { PageSkeleton, ErrorState, EmptyState } from '@/components/common/StateViews'
   import { ReputationCard } from '@/components/jobs/ReputationCard'
@@ -50,7 +52,7 @@ function BulletList({ items }: { items: string[] }) {
   return (
     <ul className="space-y-1.5">
       {items.map((it, i) => (
-        <li key={i} className="flex gap-2 text-[14px] leading-relaxed text-ink-body">
+        <li key={i} className="flex gap-2 reading-copy text-ink-body">
           <span className="mt-[9px] size-1 shrink-0 rounded-full bg-ink-tertiary" />
           {it}
         </li>
@@ -149,6 +151,8 @@ function SimilarJobsCard({ jobId }: { jobId: string }) {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const returnTo = safeJobsReturn(searchParams.get('from'))
   const { data: job, isLoading, isError, refetch } = useJob(id ?? '')
   const toggleFav = useToggleFavorite()
   const markApplied = useMarkApplied()
@@ -195,7 +199,7 @@ export default function JobDetailPage() {
 
   return (
     <div className="space-y-5">
-      <Link to="/jobs" className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary hover:text-ink transition-colors">
+      <Link to={returnTo} className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary hover:text-ink transition-colors">
         <ArrowLeft className="size-4" />
         返回岗位中心
       </Link>
@@ -215,16 +219,17 @@ export default function JobDetailPage() {
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-ink-secondary">
               <span>发布时间 {job.publishedAt ?? '未知'}</span>
-              <span>首次发现 {job.firstSeenAt}</span>
-              <span>最后更新 {job.lastUpdatedAt}</span>
+              <span>首次发现 {formatLocalTime(job.firstSeenAt)}</span>
+              <span>最后更新 {formatLocalTime(job.lastUpdatedAt)}</span>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <span className="text-[13px] text-ink-secondary">届别 <MatchBadge level={job.gradYearMatch} /></span>
               <span className="text-[13px] text-ink-secondary">能力 <MatchBadge level={job.abilityMatch} /></span>
-              <span className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary">难度 <DifficultyMeter value={job.difficulty} /></span>
+              <span className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary">难度 {job.abilityMatch === 'unknown' || job.difficultyEvaluated === false ? '待评估' : <DifficultyMeter value={job.difficulty} />}</span>
             </div>
           </div>
           <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+            <GrowthTargetButton source="official" id={job.id} disabled={isNotice} />
             {latestApplication ? (
               <Button asChild variant="outline" className="border-brand/30 text-brand-foreground">
                 <Link to={`/applications/${latestApplication.id}`}>
@@ -317,12 +322,13 @@ export default function JobDetailPage() {
         )}
       </Card>
 
-      <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
+      <OfficialAssessmentPanel job={job} />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         {/* 左侧主体 */}
         <div className="space-y-5">
           <Card className="space-y-5">
             <Section title={isNotice ? '通知概览' : '岗位概览'}>
-              <p className="text-[14px] leading-relaxed text-ink-body">{job.overview}</p>
+              <p className="reading-copy text-ink-body">{job.overview}</p>
             </Section>
             <Section title={isNotice ? '招聘通知正文' : '工作职责'}>
               <BulletList items={job.responsibilities} />
@@ -345,7 +351,7 @@ export default function JobDetailPage() {
                   JD 不完整：{job.jdIncompleteReason || '官网当前页面只提供了岗位摘要，请打开来源页人工确认。'}
                 </div>
               )}
-              <div className="rounded-lg bg-surface-subtle p-4 text-[13px] leading-relaxed text-ink-body whitespace-pre-wrap">
+              <div className="rounded-lg bg-surface-subtle p-4 reading-copy text-ink-body whitespace-pre-wrap">
                 {job.jdText}
               </div>
             </Section>
@@ -410,7 +416,7 @@ export default function JobDetailPage() {
               </Button>
             </Card>
           )}
-          <Card>
+          {!job.eligibility && <Card>
             <div className="mb-3 flex items-center gap-2">
               <Sparkles className="size-4 text-brand" />
               <h3 className="text-[15px] font-semibold text-ink">AI 匹配分析</h3>
@@ -452,14 +458,16 @@ export default function JobDetailPage() {
                 </ul>
               </div>
             </div>
-          </Card>
+          </Card>}
 
           <Card>
             <div className="mb-3 flex items-center gap-2">
               <Gauge className="size-4 text-warning" />
-              <h3 className="text-[15px] font-semibold text-ink">岗位难度 {job.difficulty}/10</h3>
+              <h3 className="text-[15px] font-semibold text-ink">岗位难度 {job.abilityMatch === 'unknown' || job.difficultyEvaluated === false ? '待评估' : `${job.difficulty}/10`}</h3>
             </div>
-            <ul className="space-y-2.5">
+            {job.abilityMatch === 'unknown' || job.difficultyEvaluated === false ? (
+              <p className="text-[13px] text-ink-secondary">单独的岗位难度尚未评分。请参考资格结论，以及上方岗位职责和真实项目证据的差距。</p>
+            ) : <ul className="space-y-2.5">
               {job.difficultyFactors.map((f) => (
                 <li key={f.label} className="flex items-start justify-between gap-3 text-[13px]">
                   <div>
@@ -469,7 +477,7 @@ export default function JobDetailPage() {
                   <Pill tone={f.level === '高' ? 'red' : f.level === '中' ? 'amber' : 'green'}>{f.level}</Pill>
                 </li>
               ))}
-            </ul>
+            </ul>}
           </Card>
 
           <Card>
@@ -491,7 +499,7 @@ export default function JobDetailPage() {
               ))}
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-ink-tertiary">URL 校验</dt>
-                <dd className="flex items-center gap-1 text-success">
+                <dd className={cn('flex items-center gap-1', job.source.urlVerified ? 'text-success' : 'text-warning')}>
                   {job.source.urlVerified ? (
                     <>
                       <CheckCircle2 className="size-3.5" />
@@ -499,8 +507,8 @@ export default function JobDetailPage() {
                     </>
                   ) : (
                     <>
-                      <XCircle className="size-3.5 text-danger" />
-                      未通过
+                      <CircleHelp className="size-3.5" />
+                      待打开核对
                     </>
                   )}
                 </dd>
@@ -508,7 +516,7 @@ export default function JobDetailPage() {
             </dl>
             <p className="mt-3 flex items-start gap-1.5 text-[12px] text-ink-tertiary">
               <CircleHelp className="mt-0.5 size-3.5 shrink-0" />
-              岗位信息均来自企业官网公开页面，系统会对详情页 URL 做真实性校验。
+              岗位来自企业官网或其公开招聘系统。列表提取的详情链接请打开原页核对。
             </p>
           </Card>
         </div>

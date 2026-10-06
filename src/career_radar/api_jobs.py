@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
+from .official_screening_service import OfficialScreeningManager
 from .web_repository import WebRepository
 
 
@@ -28,10 +29,37 @@ class BulkJobStatePayload(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=1000)
 
 
-def create_jobs_router(repository: WebRepository) -> APIRouter:
+class ScreeningPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: list[str] | None = Field(default=None, min_length=1, max_length=200)
+    force: bool = False
+
+
+def create_jobs_router(repository: WebRepository, screening: OfficialScreeningManager | None = None) -> APIRouter:
     """创建岗位路由；仓储由应用工厂显式注入。"""
 
     router = APIRouter(prefix="/api", tags=["jobs"])
+
+    @router.get("/jobs/screening")
+    def screening_status() -> dict:
+        return screening.status() if screening else {"status": "idle"}
+
+    @router.post("/jobs/screening", status_code=202)
+    def screen_jobs(payload: ScreeningPayload) -> dict:
+        if screening is None:
+            raise HTTPException(503, "官网评估服务尚未启动")
+        try:
+            return screening.start(payload.ids, force=payload.force)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.delete("/jobs/screening")
+    def stop_screening() -> dict:
+        if screening is None:
+            raise HTTPException(503, "官网评估服务尚未启动")
+        return screening.stop()
 
     @router.get("/jobs")
     def list_jobs() -> list[dict[str, Any]]:

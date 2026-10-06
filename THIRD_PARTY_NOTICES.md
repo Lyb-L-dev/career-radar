@@ -1,9 +1,5 @@
 # Third-Party Notices
 
-## BOSS 抓取工具
-
-Career Radar 可选调用 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper) 的已安装 CLI，通过用户登录的专用浏览器读取列表和详情。核对版本为提交 `80f0e478b050a6f11dff806745fe61429ad474d9`，上游为 MIT License（Copyright (c) 2026 eatmoreduck）。本仓库没有打包或复制上游代码；上游安装目录须保留自己的 LICENSE。
-
 Career Radar 的申请材料工作流参考了以下开源项目的工作流思想：
 
 ## AI Job Search
@@ -42,12 +38,23 @@ SOFTWARE.
 
 ## 运行时依赖
 
+Career Radar 提供可选的 FormPilot JSON 导出桥接，供用户自行安装浏览器扩展。
+没有打包或复制 FormPilot 的代码，也没有把它作为运行时依赖：
+
+- [FormPilot](https://github.com/rockbenben/form-pilot)（MIT，Copyright (c) 2026 rockbenben）：参考其公开的 1.2.1 导入数据模型与工作流，Career Radar 使用自身 Python 模型完成字段转换。扩展在浏览器本地负责填表和答案记忆。
+
 Career Radar 直接使用了以下开源库，其许可证声明由各项目保留：
 
 - [trafilatura](https://github.com/adbar/trafilatura)（Apache-2.0）：用于优先
-  提取正文并去除导航/页脚样板，失败时自动回退到内置 BeautifulSoup 清洗。
+  提取正文并去除导航/页脚样板，失败时自动回退到内置 BeautifulSoup 清洗；
+  同时复用 `extract_robots_sitemaps` 识别官方站点地图声明。
+- [lxml](https://github.com/lxml/lxml)（BSD-3-Clause）：对已通过本机抓取安全边界的
+  官方 XML 站点地图做有界解析，不复制第三方站点地图爬虫源码。
 - [apprise](https://github.com/caronc/apprise)（BSD-3-Clause）：用于把岗位
   摘要推送到 Telegram、企业微信、钉钉、ntfy 等渠道。
 - [litellm](https://github.com/BerriAI/litellm)（MIT，可选安装）：
   `pip install -e ".[llm-gateway]"` 后，通过 `provider: litellm` 统一接入
   各模型供应商。
+# Frontend accessibility verification
+
+`axe-core` 4.13.0 (Deque Systems and contributors) is used only as a development/test dependency, injected by the local browser verification scripts. It is licensed under Mozilla Public License 2.0. The original license is retained in `web/node_modules/axe-core/LICENSE`; upstream: https://github.com/dequelabs/axe-core/tree/v4.13.0. It is not imported into the production application bundle.

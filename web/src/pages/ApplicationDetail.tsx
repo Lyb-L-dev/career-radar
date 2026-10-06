@@ -26,7 +26,7 @@ import {
   useRenderApplication,
   useResumeApplication,
 } from '@/hooks/useApplications'
-import { downloadApplicationArtifact } from '@/services/applications'
+import { downloadApplicationArtifact, downloadFormPilotProfile } from '@/services/applications'
 import {
   APPLICATION_DIMENSION_LABEL,
   APPLICATION_STATUS_LABEL,
@@ -63,6 +63,7 @@ export default function ApplicationDetailPage() {
   const render = useRenderApplication()
   const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const [downloading, setDownloading] = useState<string>()
 
   if (isLoading) return <PageSkeleton />
@@ -163,7 +164,7 @@ export default function ApplicationDetailPage() {
               </div>
               <div className="rounded-lg bg-surface-subtle p-4 text-center">
                 <p className="mt-1 text-[17px] font-semibold text-ink">{VERDICT_LABEL[evaluation.verdict]}</p>
-                <p className="mt-2 text-[12px] text-ink-tertiary">DeepSeek 结构化评估</p>
+                <p className="mt-2 text-[12px] text-ink-tertiary">AI 结构化评估</p>
               </div>
             </div>
             <p className="mt-4 rounded-lg bg-surface-subtle px-4 py-3 text-[14px] leading-relaxed text-ink-body">
@@ -242,12 +243,12 @@ export default function ApplicationDetailPage() {
         <Card>
           <div className="flex items-center gap-3 text-[13px] text-ink-secondary">
             <Loader2 className="size-4 animate-spin text-brand" />
-            DeepSeek 尚未完成岗位与私有画像的结构化评估。
+            当前模型尚未完成岗位与私有画像的结构化评估。
           </div>
         </Card>
       )}
 
-      {task.artifacts.length > 0 && (
+        {task.artifacts.length > 0 && (
         <Card>
           <CardTitle>可下载的申请材料</CardTitle>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -280,8 +281,28 @@ export default function ApplicationDetailPage() {
           </div>
           <div className="mt-4 flex items-start gap-2 rounded-lg bg-warning-soft px-3 py-2 text-[12px] leading-relaxed text-warning">
             <ShieldCheck className="mt-0.5 size-4 shrink-0" />
-            系统不会自动投递。请逐页检查事实、措辞、格式和联系方式，再到企业官网手动提交。
+            申请材料需要你逐页核对。官网表单也应核对后由你提交。
           </div>
+        </Card>
+      )}
+
+      {task.status === 'ready' && (
+        <Card>
+          <CardTitle>官网表单辅助填写</CardTitle>
+          <p className="text-[13px] leading-relaxed text-ink-body">
+            将这次申请已确认的私有画像导入 <a className="text-brand underline" href="https://github.com/rockbenben/form-pilot" target="_blank" rel="noopener noreferrer">FormPilot 浏览器扩展</a>，姓名、联系方式、教育、项目等可在官网表单上点击扩展的“填充当前页”复用。首次导入一次即可；画像变化后需重新导入并清理旧资料。
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="outline" disabled={downloading === 'formpilot'} onClick={() => setExportOpen(true)}>
+              <Download className="size-4" />下载 FormPilot 资料
+            </Button>
+            <Button asChild variant="outline">
+              <Link to={`/jobs/${task.jobId}`}>查看官网投递入口</Link>
+            </Button>
+          </div>
+          <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">
+            遇到未识别、未保存或敏感字段时由你填写；在扩展中点“记住本页”，下次才会复用答案。简历文件上传、验证码、多页确认和最终提交仍需你在官网完成。下载的 JSON 含个人信息，请妥善保管。
+          </p>
         </Card>
       )}
 
@@ -289,9 +310,27 @@ export default function ApplicationDetailPage() {
         open={approveOpen}
         onOpenChange={setApproveOpen}
         title="批准生成定制申请材料？"
-        description="批准后将调用 DeepSeek 生成定制简历和求职信，并进行事实审查与招聘视角审查，可能产生 API 费用。"
+        description="批准后将调用当前配置的模型生成定制简历和求职信，并进行事实审查与招聘视角审查，可能产生 API 费用。"
         confirmLabel="批准并继续"
         onConfirm={() => mutate(approve, '已批准，开始生成和双重审查')}
+      />
+      <ConfirmDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        title="下载私有填表资料？"
+        description="文件含姓名、电话、邮箱等个人信息，只会下载到本机。导入 FormPilot 后仍需你在每个官网表单中主动点击填充、检查并提交。"
+        confirmLabel="确认下载"
+        onConfirm={async () => {
+          setDownloading('formpilot')
+          try {
+            await downloadFormPilotProfile(task.id)
+            toast.success('已下载 FormPilot 资料')
+          } catch (error) {
+            toast.error('下载失败', { description: actionError(error) })
+          } finally {
+            setDownloading(undefined)
+          }
+        }}
       />
       <ConfirmDialog
         open={rejectOpen}

@@ -1,10 +1,11 @@
+import HomeOpportunities from '@/components/jobs/HomeOpportunities'
+import { formatLocalTime } from '@/lib/browserState'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import {
   ArrowUpRight,
   ArrowDownRight,
-  Star,
   Play,
   History,
   ChevronRight,
@@ -30,25 +31,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Card, CardTitle } from '@/components/common/PageHeader'
-import { SourceNote } from '@/components/jobs/SourceNote'
-import { MatchBadge, DifficultyMeter, Pill } from '@/components/common/Badges'
-import { PageSkeleton, ErrorState } from '@/components/common/StateViews'
+import GrowthSummary from '@/components/GrowthSummary'
+import { Pill } from '@/components/common/Badges'
 import { useDashboardStats, useRuns } from '@/hooks/useData'
 import { useCompanies } from '@/hooks/useCompanies'
-import { useJobs, useToggleFavorite } from '@/hooks/useJobs'
+import { useJobs } from '@/hooks/useJobs'
 import { useApplications } from '@/hooks/useApplications'
 import { createRun } from '@/services/runs'
-import type { Job } from '@/types'
 import { cn } from '@/lib/utils'
-
-function greeting(): string {
-  const h = new Date().getHours()
-  if (h < 6) return '夜深了'
-  if (h < 11) return '早上好'
-  if (h < 14) return '中午好'
-  if (h < 18) return '下午好'
-  return '晚上好'
-}
 
 function StatCard({
   label,
@@ -67,11 +57,11 @@ function StatCard({
   return (
     <button
       onClick={() => navigate(to)}
-      className="group rounded-xl bg-surface p-5 text-left shadow-card transition-shadow hover:shadow-pop"
+      className="group rounded-xl bg-surface p-5 text-left transition-colors hover:bg-surface-subtle"
     >
       <p className="text-[13px] text-ink-secondary">{label}</p>
       <div className="mt-1.5 flex items-baseline gap-2">
-        <span className="text-[32px] font-semibold leading-none text-ink tabular-nums">{value}</span>
+        <span className="text-[22px] font-semibold leading-none text-ink tabular-nums">{value}</span>
         {delta !== undefined && delta !== 0 && (
           <span
             className={cn(
@@ -89,58 +79,6 @@ function StatCard({
   )
 }
 
-function RecommendJobCard({ job }: { job: Job }) {
-  const navigate = useNavigate()
-  const toggleFav = useToggleFavorite()
-  return (
-    <div className="flex flex-col rounded-xl bg-surface p-5 shadow-card">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <Link to={`/jobs/${job.id}`} className="text-[15px] font-semibold text-ink hover:text-brand transition-colors line-clamp-1">
-            {job.title}
-          </Link>
-          <p className="mt-0.5 text-[13px] text-ink-secondary">
-            {job.companyName} · {job.city}
-          </p>
-        </div>
-        {job.highlyRecommended && <Pill tone="orange">高度推荐</Pill>}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-ink-secondary">
-        <SourceNote kind="official" site={job.source?.site} />
-        <Pill tone="gray">{job.type === 'internship' ? '实习' : job.type === 'campus' ? '校招' : '全职'}</Pill>
-        <span>届别 <MatchBadge level={job.gradYearMatch} /></span>
-        <span>能力 <MatchBadge level={job.abilityMatch} /></span>
-        <span className="inline-flex items-center gap-1.5">难度 <DifficultyMeter value={job.difficulty} /></span>
-      </div>
-      <p className="mt-3 flex-1 text-[13px] leading-relaxed text-ink-body">{job.recommendReason}</p>
-      <div className="mt-4 flex items-center justify-between">
-        <span className="text-[12px] text-ink-tertiary">更新于 {job.lastUpdatedAt.slice(5, 16)}</span>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn('text-ink-secondary', job.isFavorite && 'text-highlight')}
-            onClick={() => {
-              toggleFav.mutate(job.id, {
-                onSuccess: (res) => toast.success(res.isFavorite ? '岗位已收藏' : '已取消收藏'),
-                onError: (error) => toast.error('操作失败', {
-                  description: error instanceof Error ? error.message : '未知错误',
-                }),
-              })
-            }}
-          >
-            <Star className={cn('size-4', job.isFavorite && 'fill-current')} />
-            {job.isFavorite ? '已收藏' : '收藏'}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => navigate(`/jobs/${job.id}`)}>
-            查看详情
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 const CHANGE_ICON = {
   discovered: <CheckCircle2 className="size-4 text-success" />,
   jd_updated: <Clock className="size-4 text-brand" />,
@@ -152,7 +90,6 @@ const CHANGE_ICON = {
 export default function DashboardPage() {
   const navigate = useNavigate()
   const { data: stats, isLoading, isError, refetch } = useDashboardStats()
-  const { data: recommended } = useJobs({ tab: 'recommended' })
   const { data: allJobs } = useJobs({ tab: 'all' })
   const { data: runs } = useRuns()
   const { data: companies } = useCompanies()
@@ -239,66 +176,21 @@ export default function DashboardPage() {
       },
     ]
   }, [allJobs, applications, companies])
-
-  if (isLoading) return <PageSkeleton />
-  if (isError || !stats) return <ErrorState onRetry={() => refetch()} />
-
   return (
     <div className="space-y-6">
-      {/* 头部 */}
-      <div className="relative overflow-hidden rounded-2xl bg-surface p-6 md:p-8 shadow-card">
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{ background: 'radial-gradient(600px 200px at 15% 0%, rgba(22,119,255,0.06), transparent 70%)' }}
-        />
-        <div className="relative flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-[26px] md:text-[32px] font-semibold text-ink tracking-tight">
-              {greeting()}，今天有 {stats.todayNew} 个新机会
-            </h1>
-            <p className="mt-2 text-[15px] text-ink-secondary">
-              Career Radar 已为你监控 {stats.monitoredCompanies} 家企业，上次扫描完成于 {stats.lastScanAt}
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={() => navigate('/runs')}>
-              <History className="size-4" />
-              查看运行记录
-            </Button>
-            <Button
-              onClick={() => setDialogOpen(true)}
-              disabled={startingScan}
-              className="bg-brand hover:bg-brand-hover text-white min-w-[132px]"
-            >
-              {startingScan ? (
-                <span className="flex items-center gap-2">
-                  <span className="size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                  正在创建任务…
-                </span>
-              ) : (
-                <>
-                  <Play className="size-4" />
-                  立即扫描
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* 关键数据 */}
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-        <StatCard label="今日新增岗位" value={stats.todayNew} delta={stats.todayNewDelta} desc="来自企业官网招聘页面" to="/jobs?tab=new" />
-        <StatCard label="今日更新岗位" value={stats.todayUpdated} delta={stats.todayUpdatedDelta} desc="JD 或投递入口发生变化" to="/jobs?tab=updated" />
-        <StatCard label="高匹配岗位" value={stats.highMatch} delta={stats.highMatchDelta} desc="与你当前画像匹配度高" to="/jobs?tab=recommended" />
-        <StatCard label="监控企业" value={stats.monitoredCompanies} desc={`${stats.environment.successCompanies} 家正常 · ${stats.environment.pendingCompanies} 家待验证`} to="/companies" />
-      </div>
-
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div><h1 className="text-[28px] font-semibold text-ink">今日岗位机会</h1><p className="mt-2 text-sm text-ink-secondary">官网今日新增 {stats?.todayNew ?? '—'} 条 · 更新 {stats?.todayUpdated ?? '—'} 条 · 上次扫描 {formatLocalTime(stats?.lastScanAt)}</p></div>
+        <Button asChild variant="outline"><Link to="/jobs">查看全部来源岗位</Link></Button>
+      </header>
+      {isLoading && <p role="status" className="text-sm text-ink-secondary">正在读取岗位概况…</p>}
+      {isError && <p role="status" className="text-sm text-danger">概况读取失败，其他岗位仍可查看。<Button variant="ghost" onClick={() => void refetch()}>重试概况</Button></p>}
+      <HomeOpportunities />
+      <GrowthSummary />
       <Card>
         <CardTitle
           extra={<span className="text-[12px] font-normal text-ink-tertiary">数据均来自本机，不会自动执行外部操作</span>}
         >
-          今日工作台
+          待处理事项
         </CardTitle>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {todayTasks.map((task) => {
@@ -321,7 +213,7 @@ export default function DashboardPage() {
                     <span className="text-[18px] font-semibold tabular-nums text-ink">{task.value}</span>
                   </span>
                   <span className="block truncate text-[12px] text-ink-tertiary">
-                    {task.value ? task.description : '今天已处理完'}
+                    {task.value ? task.description : '暂无待处理项'}
                   </span>
                 </span>
               </button>
@@ -357,22 +249,17 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {/* AI 推荐岗位 */}
-      <div>
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-[20px] font-semibold text-ink">最适合你的岗位</h2>
-          <Link to="/jobs?tab=recommended" className="flex items-center text-[13px] text-brand hover:underline">
-            查看全部
-            <ChevronRight className="size-4" />
-          </Link>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {(recommended ?? []).slice(0, 3).map((job) => (
-            <RecommendJobCard key={job.id} job={job} />
-          ))}
-        </div>
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface p-5" aria-label="监控操作"><div><h2 className="text-lg font-semibold">监控简报</h2><p className="mt-1 text-sm text-ink-secondary">扫描与数据状态单独呈现，不影响已保存岗位的阅读。</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => navigate('/runs')}><History className="size-4" />查看运行记录</Button><Button variant="outline" disabled={startingScan} onClick={() => setDialogOpen(true)}><Play className="size-4" />{startingScan ? '正在创建扫描…' : '立即扫描'}</Button></div></section>
+      {stats && <>
+      {/* 关键数据 */}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="今日新增岗位" value={stats.todayNew} delta={stats.todayNewDelta} desc="来自企业官网招聘页面" to="/jobs?tab=new" />
+        <StatCard label="今日更新岗位" value={stats.todayUpdated} delta={stats.todayUpdatedDelta} desc="JD 或投递入口发生变化" to="/jobs?tab=updated" />
+        <StatCard label="高匹配岗位" value={stats.highMatch} delta={stats.highMatchDelta} desc="与你当前画像匹配度高" to="/jobs?tab=recommended" />
+        <StatCard label="监控企业" value={stats.monitoredCompanies} desc={`${stats.environment.successCompanies} 家正常 · ${stats.environment.pendingCompanies} 家待验证`} to="/companies" />
       </div>
 
+      </>}
       {/* 第三行：最近变化 + 运行状态 */}
       <div className="grid gap-4 xl:grid-cols-2">
         <Card>
@@ -388,11 +275,11 @@ export default function DashboardPage() {
           </CardTitle>
           <ul className="divide-y divide-black/[0.05]">
             {recentJobChanges.map((c) => (
-              <li key={`${c.jobId}-${c.time}`} className="flex items-center gap-3 py-3">
+              <li key={`${c.jobId}-${formatLocalTime(c.time)}`} className="flex items-center gap-3 py-3">
                 {CHANGE_ICON[c.type]}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[14px] text-ink-body">{c.summary}</p>
-                  <p className="text-[12px] text-ink-tertiary">{c.time}</p>
+                  <p className="break-words text-[12px] text-ink-tertiary">{formatLocalTime(c.time)}</p>
                 </div>
                 <Button variant="ghost" size="sm" className="text-brand" onClick={() => navigate(`/jobs/${c.jobId}`)}>
                   查看变化
@@ -459,7 +346,7 @@ export default function DashboardPage() {
       <Card>
         <CardTitle>需要关注</CardTitle>
         <ul className="space-y-3">
-          {stats.attentionItems.map((item) => (
+          {(stats?.attentionItems ?? []).map((item) => (
             <li
               key={item.id}
               className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-subtle px-4 py-3"
@@ -494,7 +381,7 @@ export default function DashboardPage() {
                 <RadioGroupItem value="all" id="scope-all" />
                 <Label htmlFor="scope-all" className="flex-1 cursor-pointer">
                   扫描全部企业
-                  <span className="block text-[12px] text-ink-tertiary">共 {stats.monitoredCompanies} 家，预计 2~4 分钟</span>
+                  <span className="block text-[12px] text-ink-tertiary">共 {stats?.monitoredCompanies ?? '—'} 家，运行时间取决于网站响应</span>
                 </Label>
               </div>
               <div className="flex items-center gap-2.5 rounded-lg border border-black/[0.08] px-3 py-2.5">

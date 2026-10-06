@@ -91,18 +91,19 @@ def test_migration_applies_once_and_bumps_version(
         applied.append(1)
         _ensure_column(connection, "jobs", "migration_probe", "TEXT")
 
+    probe_version = SCHEMA_VERSION + 1
     monkeypatch.setattr(
         storage_module,
         "MIGRATIONS",
-        list(MIGRATIONS) + [Migration(11, "probe column", probe_migration)],
+        list(MIGRATIONS) + [Migration(probe_version, "probe column", probe_migration)],
     )
-    monkeypatch.setattr(storage_module, "SCHEMA_VERSION", 11)
+    monkeypatch.setattr(storage_module, "SCHEMA_VERSION", probe_version)
 
     storage.initialize()
     storage.initialize()
 
     assert applied == [1]
-    assert _user_version(storage) == 11
+    assert _user_version(storage) == probe_version
     with storage.transaction() as connection:
         columns = {
             row["name"]

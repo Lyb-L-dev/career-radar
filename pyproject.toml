@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "career-radar"
 version = "1.2.0"
-description = "企业官网招聘信息自动监控与完整 JD 提取工具"
+description = "岗位雷达、JD 对照与能力证据成长工作台"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -15,6 +15,7 @@ dependencies = [
   "anthropic>=0.55,<2",
   "beautifulsoup4>=4.12,<5",
   "fastapi>=0.115,<1",
+  "lxml>=5,<7",
   "openai>=2.37,<3",
   "playwright>=1.49,<2",
   "pydantic>=2.8,<3",

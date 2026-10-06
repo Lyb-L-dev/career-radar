@@ -50,8 +50,8 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   }
 }
 
-export async function apiDownload(path: string, filename: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}${path}`)
+export async function apiDownload(path: string, filename: string, init: RequestInit = {}): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}${path}`, init)
   if (!response.ok) {
     const payload = await response.json().catch(() => null)
     throw new ApiError(response.status, payload?.detail || `下载失败：HTTP ${response.status}`)

@@ -4,6 +4,8 @@ Career Radar 的 React 管理端，位于 Python 项目同一仓库的 `web/` �
 
 ## 技术栈
 
+首页先展示官网与 BOSS 的岗位机会，成长页以路线图与证据为主视图。筛选和来源支持 URL 恢复；详情返回原列表；答案、项目材料与任务反馈保留本地草稿。全局搜索按需加载，后台刷新保留已有内容。
+
 - React 19、TypeScript、Vite 7
 - TanStack Query、React Router 7
 - Tailwind CSS、shadcn/ui、lucide-react、sonner

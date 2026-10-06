@@ -1,0 +1,431 @@
+{
+  "timestamp": "2026-10-05T21:41:23.522978+08:00",
+  "provider": "mimo",
+  "model": "mimo-v2.6-pro",
+  "outputTokenLimit": 6000,
+  "syntheticData": true,
+  "productionDatabaseWritten": false,
+  "cases": [
+    {
+      "name": "question_teach_next_day",
+      "ok": true,
+      "question": {
+        "answered": false,
+        "assisted": false,
+        "code": "GET /api/jobs?limit=-1 HTTP/1.1\nHost: career.example\nAccept: application/json\nCookie: session_id=example1\n\nHTTP/1.1 400 Bad Request\nContent-Type: application/json\nSet-Cookie: session_id=example2; HttpOnly; Path=/\n\n{\"error\": \"limit must be positive\"}",
+        "expectedAnswer": "HTTP/1.1 的请求和响应报文都由起始行、头部和空行分隔的消息体组成（request）：本例请求起始行为 GET /api/jobs?limit=-1 HTTP/1.1，带 Host、Accept、Cookie 头部，无消息体；响应起始行为 HTTP/1.1 400 Bad Request，带 Content-Type、Set-Cookie 头部，消息体为 JSON 错误对象。GET 用于查询/获取 jobs 列表，这里用查询参数 limit=-1 请求受限列表，GET 期望不修改服务端状态（methods）；POST 未在本例出现，不要求凭空补一个 POST 接口。400 表示客户端请求有误，本例因 limit 必须为正数（limit must be positive），由服务端参数校验返回（status）。Content-Type: application/json 是响应头部，声明消息体是 JSON 媒体类型，供客户端按 JSON 解析（headers）。Cookie/Session 机制上，Cookie 由客户端存储并随请求发送（请求中的 Cookie: session_id=example1），响应中的 Set-Cookie 由服务端下发新的 session_id=example2 并带 HttpOnly、Path=/ 属性，属于 Cookie 会话标识机制；服务端 session 的存储方式本例未说明，不要推断为服务端存储，也不要说这是加密的。",
+        "followupDepth": 0,
+        "id": "85e65158a29c4efaafb54043d97f8b63",
+        "mode": "explain",
+        "pointIds": [
+          "request",
+          "methods",
+          "status",
+          "headers",
+          "session"
+        ],
+        "rubricVersion": "growth-rubric-v1",
+        "skillId": "http",
+        "text": "下面是一次 HTTP/1.1 交互（题目材料，非运行结果）。请说明：请求报文由哪几部分组成、GET 和 POST 在这条链路中各自承担什么用途、响应为什么返回 400、Content-Type 头部在这里的作用是什么，以及 Cookie / session_id 在这个示例里代表什么机制（未实现的部分不要推断）。"
+      },
+      "variant": {
+        "answered": false,
+        "assisted": false,
+        "code": "GET /api/jobs?limit=5 HTTP/1.1\nHost: career.example\nAccept: application/json\nCookie: session_id=example1\n\nHTTP/1.1 500 Internal Server Error\nContent-Type: application/json\n\n{\"error\": \"database unavailable\"}",
+        "expectedAnswer": "1）request：这是 HTTP/1.1 文本协议，请求由起始行、头部和空行组成（GET 请求无正文）；响应由状态行、头部、空行和 JSON 正文组成。不要把这种文本格式泛称到 HTTP/2/HTTP/3。\n2）methods：GET 用于获取 /api/jobs 列表资源，属于期望不修改服务端状态的安全方法（实际是否有附带行为取决于实现）；它通过查询参数 limit=5 传参。\n3）status：500 Internal Server Error 表示服务端在处理请求时发生内部错误，这里对应数据库不可用；400 才表示请求本身有问题（如参数不合法），本例未出现。\n4）headers：Content-Type: application/json 表示响应正文的媒体类型是 JSON，客户端应按 JSON 解析 {\"error\": ...}；Accept 是请求头，声明客户端可接受的响应类型。\n5）session：Cookie 机制中，Cookie 存放在客户端（这里是浏览器）并在请求中通过 Cookie 头携带 session_id=example1 发给服务端；本例响应没有 Set-Cookie 或其他 Cookie 相关头部，因此不能据此推断 Session 的具体存储位置（服务器端或客户端签名 Cookie）或任何验证/轮换行为，仅能看到客户端发送了这个标识。",
+        "followupDepth": 0,
+        "id": "c6a78b97950c49228de7ab3087997606",
+        "mode": "explain",
+        "pointIds": [
+          "request",
+          "methods",
+          "status",
+          "headers",
+          "session"
+        ],
+        "rubricVersion": "growth-rubric-v1",
+        "skillId": "http",
+        "text": "下面是一条 HTTP/1.1 交互（题目材料，非运行结果）。请说明：请求由哪几部分组成、这里 GET 方法的用途是什么、响应中的 500 和 Content-Type 各表示什么、响应里没有出现 Cookie 相关头部，那么 Cookie/session_id 在这条链路上属于哪一侧的机制？"
+      },
+      "afterWrong": {
+        "level": 0,
+        "streak": 0,
+        "nextReview": "2026-10-06"
+      },
+      "seconds": 51.96,
+      "calls": [
+        {
+          "seconds": 17.8,
+          "usage": {
+            "completion_tokens": 514,
+            "prompt_tokens": 1440,
+            "total_tokens": 1954,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1408
+            }
+          },
+          "finishReason": "stop"
+        },
+        {
+          "seconds": 17.52,
+          "usage": {
+            "completion_tokens": 816,
+            "prompt_tokens": 2196,
+            "total_tokens": 3012,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 128
+            }
+          },
+          "finishReason": "stop"
+        },
+        {
+          "seconds": 16.25,
+          "usage": {
+            "completion_tokens": 477,
+            "prompt_tokens": 1522,
+            "total_tokens": 1999,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 0
+            }
+          },
+          "finishReason": "stop"
+        }
+      ],
+      "outputs": [
+        {
+          "task": "question",
+          "result": {
+            "question": {
+              "text": "下面是一次 HTTP/1.1 交互（题目材料，非运行结果）。请说明：请求报文由哪几部分组成、GET 和 POST 在这条链路中各自承担什么用途、响应为什么返回 400、Content-Type 头部在这里的作用是什么，以及 Cookie / session_id 在这个示例里代表什么机制（未实现的部分不要推断）。",
+              "code": "GET /api/jobs?limit=-1 HTTP/1.1\nHost: career.example\nAccept: application/json\nCookie: session_id=example1\n\nHTTP/1.1 400 Bad Request\nContent-Type: application/json\nSet-Cookie: session_id=example2; HttpOnly; Path=/\n\n{\"error\": \"limit must be positive\"}",
+              "pointIds": [
+                "request",
+                "methods",
+                "status",
+                "headers",
+                "session"
+              ],
+              "expectedAnswer": "HTTP/1.1 的请求和响应报文都由起始行、头部和空行分隔的消息体组成（request）：本例请求起始行为 GET /api/jobs?limit=-1 HTTP/1.1，带 Host、Accept、Cookie 头部，无消息体；响应起始行为 HTTP/1.1 400 Bad Request，带 Content-Type、Set-Cookie 头部，消息体为 JSON 错误对象。GET 用于查询/获取 jobs 列表，这里用查询参数 limit=-1 请求受限列表，GET 期望不修改服务端状态（methods）；POST 未在本例出现，不要求凭空补一个 POST 接口。400 表示客户端请求有误，本例因 limit 必须为正数（limit must be positive），由服务端参数校验返回（status）。Content-Type: application/json 是响应头部，声明消息体是 JSON 媒体类型，供客户端按 JSON 解析（headers）。Cookie/Session 机制上，Cookie 由客户端存储并随请求发送（请求中的 Cookie: session_id=example1），响应中的 Set-Cookie 由服务端下发新的 session_id=example2 并带 HttpOnly、Path=/ 属性，属于 Cookie 会话标识机制；服务端 session 的存储方式本例未说明，不要推断为服务端存储，也不要说这是加密的。",
+              "mode": "explain"
+            }
+          }
+        },
+        {
+          "task": "grade",
+          "result": {
+            "points": [
+              {
+                "pointId": "request",
+                "passed": false,
+                "answerQuote": "不会",
+                "reason": "本次回答只有“不会”，没有说明请求或响应报文的组成部分，缺少 Request/Response 结构证据。"
+              },
+              {
+                "pointId": "methods",
+                "passed": false,
+                "answerQuote": "不会",
+                "reason": "本次回答未解释 GET 在该链路中的用途，也没有涉及 POST，无法作为该评分点证据。"
+              },
+              {
+                "pointId": "status",
+                "passed": false,
+                "answerQuote": "不会",
+                "reason": "本次回答未解释 400 状态码及其原因，缺少状态码含义证据。"
+              },
+              {
+                "pointId": "headers",
+                "passed": false,
+                "answerQuote": "不会",
+                "reason": "本次回答未说明 Content-Type 的作用，缺少 Headers 证据。"
+              },
+              {
+                "pointId": "session",
+                "passed": false,
+                "answerQuote": "不会",
+                "reason": "本次回答未说明 Cookie、Set-Cookie 或 session_id 代表的机制，缺少 Cookie/Session 证据。"
+              }
+            ],
+            "feedback": "本次回答只有“不会”，因此五个评分点均未通过。题目是分析给定的 HTTP/1.1 报文，不要求实现代码；可以先按“请求起始行和头部、响应起始行和头部、消息体”拆解材料，再分别说明状态码、Content-Type 以及 Cookie/Set-Cookie。",
+            "teaching": "材料中的请求是 `GET /api/jobs?limit=-1 HTTP/1.1`，后面跟 `Host`、`Accept`、`Cookie` 等头部，空行后没有消息体。响应起始行是 `HTTP/1.1 400 Bad Request`，随后是 `Content-Type`、`Set-Cookie` 头部，空行后是 JSON 消息体 `{\"error\": \"limit must be positive\"}`。GET 在这里用于查询 jobs 列表，携带查询参数 `limit=-1`；材料没有 POST 请求，不能凭空补充 POST 接口。400 表示客户端请求参数有误，具体是 `limit` 必须为正数。`Content-Type: application/json` 告诉客户端消息体是 JSON 媒体类型。`Cookie: session_id=example1` 表示客户端随请求发送已有 Cookie；`Set-Cookie: session_id=example2` 表示服务端下发新的 Cookie 值，并附带 `HttpOnly`、`Path=/` 属性。材料没有说明 session 存储位置，不能推断为服务端存储，也不能把它说成加密。",
+            "followup": {
+              "text": "基于同一段 HTTP/1.1 报文，请分别指出：请求消息体是否存在；GET 为什么是查询用途；400 的具体原因是什么；Content-Type 的作用是什么；Cookie 和 Set-Cookie 各代表什么。",
+              "code": "GET /api/jobs?limit=-1 HTTP/1.1\nHost: career.example\nAccept: application/json\nCookie: session_id=example1\n\nHTTP/1.1 400 Bad Request\nContent-Type: application/json\nSet-Cookie: session_id=example2; HttpOnly; Path=/\n\n{\"error\": \"limit must be positive\"}",
+              "pointIds": [
+                "request",
+                "methods",
+                "status",
+                "headers",
+                "session"
+              ],
+              "expectedAnswer": "请求无消息体，起始行后是头部，空行后结束；GET 用于查询 jobs 列表，携带 limit=-1 查询参数，不应修改服务端状态；400 表示客户端参数有误，具体为 limit 必须为正数；Content-Type: application/json 声明响应消息体是 JSON 媒体类型；Cookie 是客户端随请求发送的 Cookie，Set-Cookie 是服务端下发新 session_id 并带 HttpOnly、Path=/ 属性，session 存储方式材料未说明。",
+              "mode": "explain"
+            }
+          }
+        },
+        {
+          "task": "question",
+          "result": {
+            "question": {
+              "text": "下面是一条 HTTP/1.1 交互（题目材料，非运行结果）。请说明：请求由哪几部分组成、这里 GET 方法的用途是什么、响应中的 500 和 Content-Type 各表示什么、响应里没有出现 Cookie 相关头部，那么 Cookie/session_id 在这条链路上属于哪一侧的机制？",
+              "code": "GET /api/jobs?limit=5 HTTP/1.1\nHost: career.example\nAccept: application/json\nCookie: session_id=example1\n\nHTTP/1.1 500 Internal Server Error\nContent-Type: application/json\n\n{\"error\": \"database unavailable\"}",
+              "pointIds": [
+                "request",
+                "methods",
+                "status",
+                "headers",
+                "session"
+              ],
+              "expectedAnswer": "1）request：这是 HTTP/1.1 文本协议，请求由起始行、头部和空行组成（GET 请求无正文）；响应由状态行、头部、空行和 JSON 正文组成。不要把这种文本格式泛称到 HTTP/2/HTTP/3。\n2）methods：GET 用于获取 /api/jobs 列表资源，属于期望不修改服务端状态的安全方法（实际是否有附带行为取决于实现）；它通过查询参数 limit=5 传参。\n3）status：500 Internal Server Error 表示服务端在处理请求时发生内部错误，这里对应数据库不可用；400 才表示请求本身有问题（如参数不合法），本例未出现。\n4）headers：Content-Type: application/json 表示响应正文的媒体类型是 JSON，客户端应按 JSON 解析 {\"error\": ...}；Accept 是请求头，声明客户端可接受的响应类型。\n5）session：Cookie 机制中，Cookie 存放在客户端（这里是浏览器）并在请求中通过 Cookie 头携带 session_id=example1 发给服务端；本例响应没有 Set-Cookie 或其他 Cookie 相关头部，因此不能据此推断 Session 的具体存储位置（服务器端或客户端签名 Cookie）或任何验证/轮换行为，仅能看到客户端发送了这个标识。",
+              "mode": "explain"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "teaching",
+      "ok": true,
+      "explanation": "先讲概念和解题思路，再给一个请你主动回忆的小测。\n\n一、一次 HTTP 请求和响应分别包含什么\n解题思路：先分清“谁发谁收”。请求是客户端发给服务端的意图描述，响应是服务端对这次请求的结果描述。\n- 请求：请求方法（如 GET/POST）、请求目标（路径、查询串）、协议版本、请求头部，以及可选的请求正文（body）。例如 POST 上传 JSON 时，正文里是 JSON 字符串，Content-Type 头部说明它是 JSON。\n- 响应：状态行（含状态码，如 200/400/500）、响应头部，以及可选的响应正文。例如返回 `{\"error\":\"...\"}` 时，通常 Content-Type 是 application/json。\n易错点：一是把请求/响应都必须带正文——GET 常常没有正文，204 响应也没有正文。二是把 HTTP/1.1 的“文本起始行+头部+空行+正文”报文格式当成所有 HTTP 版本的唯一格式；HTTP/2、HTTP/3 用帧和伪头部传输，题目若没限定版本，最好说“以 HTTP/1.1 报文为例”。\n\n二、GET 与 POST 的语义区别\n解题思路：从“意图”而非“能不能带参数”来区分。\n- GET：请求资源的表示，是安全方法，意思是客户端不期望这次请求改变服务端状态（允许日志等附带行为），同时也是幂等的。参数通常放在 URL 查询串。\n- POST：把请求正文交给目标资源，按该资源自己的语义处理，不限于“创建资源”。比如登录是“提交凭证换会话”，提交表单可能是“按业务规则处理数据”。POST 也能带查询参数，应用也可以自己实现幂等。\n易错点：说“POST 一定创建资源”“GET 一定不能带 body”“POST 一律不能被缓存”都不严谨。语义区别在于意图和期望效果，不在参数放在哪里。\n\n三、400 与 500 的区别\n解题思路：看错在谁。\n- 400 Bad Request：请求本身有问题，比如参数缺失、格式非法、值不合法（例如 limit=-1）。服务端认为这是客户端能修正的错误。\n- 500 Internal Server Error：服务端内部出乎意料的错误，比如数据库不可用、未捕获异常。客户端重发同样请求通常也无济于事。\n易错点：把 400 当成“服务端报错”或把 500 当成“参数写错”。另外要注意 4xx 不一定全是参数问题（还有 401/403/404 等），5xx 也不只 500 一个，但这题只考 400/500 的语义对比。\n\n四、Headers 的用途\n解题思路：头部是关于这次报文的元数据/修饰信息，不是正文内容本身。\n常见例子：Content-Type 说明正文的媒体类型（比如 application/json），让对方知道怎么解析正文；Authorization 携带认证凭证；Accept 表示客户端能接受的响应类型；Cookie 是客户端把存储的键值对随请求带给服务端。\n易错点：把 Content-Type 当成正文的一部分。另外按参考规则校准：JSONResponse 这类响应对象会自动设置 JSON 的 Content-Type，这本身就是响应头的例子，不能因为代码里没手写其他头部就认为“没用到 Headers”。浏览器环境里脚本不能直接设置 Cookie 请求头，要靠 Set-Cookie、credentials 等机制，但这题不需要展开。\n\n五、Cookie 与 Session（以常见服务端 Session 方案为例）\n解题思路：先问“数据存在哪”，再问“怎么关联”。\n- Cookie：存在客户端（浏览器），按域和路径等作用域保存，之后符合条件的请求会自动带上。\n- Session：常见方案是服务端保存会话数据，发一个会话标识给客户端，客户端把它存在 Cookie 里（例如 session_id），之后每次请求带上这个 Cookie，服务端据此找到对应的会话数据并知道“你是谁”。\n易错点：一，不是所有框架的 Session 都存在服务端——比如 Flask 默认 Session 是签名的客户端 Cookie，签名只防篡改不加密、不隐藏内容，所以不能说“Session 一定在服务端”。本题限定“常见服务端 Session 方案”，按这个前提答即可，但要知道这只是其中一种实现。二，混淆存储位置：Cookie 在客户端，服务端 Session 的数据在服务端，两者靠会话标识关联。\n\n六、解题套路小结\n1. 描述报文：分别列请求和响应的组成，正文是可选的，版本差异要留一句余地。\n2. 方法对比：GET=取表示、安全；POST=按资源语义处理正文，不限于创建。\n3. 状态码：400=请求问题，500=服务端意外错误。\n4. Headers：Content-Type 描述正文媒体类型，Authorization 做认证。\n5. Cookie/Session：Cookie 在客户端，服务端 Session 数据在服务端，用 Cookie 里的会话标识关联。\n\n现在请你用自己的话回答下面这道题，我会据你的回答判断你是否真的掌握：\n【题目】假设你要为一个“提交消息”的接口 POST /api/messages 设计响应：请求带 JSON 正文。请说明 (1) 这次请求报文里有哪些部分、正文是什么格式且由哪个头部描述；(2) 用 POST 而不是 GET 的语义理由；(3) 若参数缺失应返回什么状态码、数据库不可用又应返回什么状态码，并说明区别；(4) 以常见服务端 Session 方案为例，说明 Cookie 和 Session 各自保存在哪里、怎么关联，并指出这种说法在其他实现里可能不成立的地方。\n答题提示：请直接口述或写出你的完整答案，不要只说“同上”。回答后我按 request / methods / status / headers / session 五个评分点逐项核对，缺少对应证据的点会判为未通过。",
+      "requiresManualQualityReview": true,
+      "seconds": 44.25,
+      "calls": [
+        {
+          "seconds": 43.99,
+          "usage": {
+            "completion_tokens": 1401,
+            "prompt_tokens": 1418,
+            "total_tokens": 2819,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 0
+            }
+          },
+          "finishReason": "stop"
+        }
+      ],
+      "outputs": [
+        {
+          "task": "teach",
+          "result": {
+            "explanation": "先讲概念和解题思路，再给一个请你主动回忆的小测。\n\n一、一次 HTTP 请求和响应分别包含什么\n解题思路：先分清“谁发谁收”。请求是客户端发给服务端的意图描述，响应是服务端对这次请求的结果描述。\n- 请求：请求方法（如 GET/POST）、请求目标（路径、查询串）、协议版本、请求头部，以及可选的请求正文（body）。例如 POST 上传 JSON 时，正文里是 JSON 字符串，Content-Type 头部说明它是 JSON。\n- 响应：状态行（含状态码，如 200/400/500）、响应头部，以及可选的响应正文。例如返回 `{\"error\":\"...\"}` 时，通常 Content-Type 是 application/json。\n易错点：一是把请求/响应都必须带正文——GET 常常没有正文，204 响应也没有正文。二是把 HTTP/1.1 的“文本起始行+头部+空行+正文”报文格式当成所有 HTTP 版本的唯一格式；HTTP/2、HTTP/3 用帧和伪头部传输，题目若没限定版本，最好说“以 HTTP/1.1 报文为例”。\n\n二、GET 与 POST 的语义区别\n解题思路：从“意图”而非“能不能带参数”来区分。\n- GET：请求资源的表示，是安全方法，意思是客户端不期望这次请求改变服务端状态（允许日志等附带行为），同时也是幂等的。参数通常放在 URL 查询串。\n- POST：把请求正文交给目标资源，按该资源自己的语义处理，不限于“创建资源”。比如登录是“提交凭证换会话”，提交表单可能是“按业务规则处理数据”。POST 也能带查询参数，应用也可以自己实现幂等。\n易错点：说“POST 一定创建资源”“GET 一定不能带 body”“POST 一律不能被缓存”都不严谨。语义区别在于意图和期望效果，不在参数放在哪里。\n\n三、400 与 500 的区别\n解题思路：看错在谁。\n- 400 Bad Request：请求本身有问题，比如参数缺失、格式非法、值不合法（例如 limit=-1）。服务端认为这是客户端能修正的错误。\n- 500 Internal Server Error：服务端内部出乎意料的错误，比如数据库不可用、未捕获异常。客户端重发同样请求通常也无济于事。\n易错点：把 400 当成“服务端报错”或把 500 当成“参数写错”。另外要注意 4xx 不一定全是参数问题（还有 401/403/404 等），5xx 也不只 500 一个，但这题只考 400/500 的语义对比。\n\n四、Headers 的用途\n解题思路：头部是关于这次报文的元数据/修饰信息，不是正文内容本身。\n常见例子：Content-Type 说明正文的媒体类型（比如 application/json），让对方知道怎么解析正文；Authorization 携带认证凭证；Accept 表示客户端能接受的响应类型；Cookie 是客户端把存储的键值对随请求带给服务端。\n易错点：把 Content-Type 当成正文的一部分。另外按参考规则校准：JSONResponse 这类响应对象会自动设置 JSON 的 Content-Type，这本身就是响应头的例子，不能因为代码里没手写其他头部就认为“没用到 Headers”。浏览器环境里脚本不能直接设置 Cookie 请求头，要靠 Set-Cookie、credentials 等机制，但这题不需要展开。\n\n五、Cookie 与 Session（以常见服务端 Session 方案为例）\n解题思路：先问“数据存在哪”，再问“怎么关联”。\n- Cookie：存在客户端（浏览器），按域和路径等作用域保存，之后符合条件的请求会自动带上。\n- Session：常见方案是服务端保存会话数据，发一个会话标识给客户端，客户端把它存在 Cookie 里（例如 session_id），之后每次请求带上这个 Cookie，服务端据此找到对应的会话数据并知道“你是谁”。\n易错点：一，不是所有框架的 Session 都存在服务端——比如 Flask 默认 Session 是签名的客户端 Cookie，签名只防篡改不加密、不隐藏内容，所以不能说“Session 一定在服务端”。本题限定“常见服务端 Session 方案”，按这个前提答即可，但要知道这只是其中一种实现。二，混淆存储位置：Cookie 在客户端，服务端 Session 的数据在服务端，两者靠会话标识关联。\n\n六、解题套路小结\n1. 描述报文：分别列请求和响应的组成，正文是可选的，版本差异要留一句余地。\n2. 方法对比：GET=取表示、安全；POST=按资源语义处理正文，不限于创建。\n3. 状态码：400=请求问题，500=服务端意外错误。\n4. Headers：Content-Type 描述正文媒体类型，Authorization 做认证。\n5. Cookie/Session：Cookie 在客户端，服务端 Session 数据在服务端，用 Cookie 里的会话标识关联。\n\n现在请你用自己的话回答下面这道题，我会据你的回答判断你是否真的掌握：\n【题目】假设你要为一个“提交消息”的接口 POST /api/messages 设计响应：请求带 JSON 正文。请说明 (1) 这次请求报文里有哪些部分、正文是什么格式且由哪个头部描述；(2) 用 POST 而不是 GET 的语义理由；(3) 若参数缺失应返回什么状态码、数据库不可用又应返回什么状态码，并说明区别；(4) 以常见服务端 Session 方案为例，说明 Cookie 和 Session 各自保存在哪里、怎么关联，并指出这种说法在其他实现里可能不成立的地方。\n答题提示：请直接口述或写出你的完整答案，不要只说“同上”。回答后我按 request / methods / status / headers / session 五个评分点逐项核对，缺少对应证据的点会判为未通过。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "project_no_execution",
+      "ok": false,
+      "error": "项目追问引入了未提交的替换代码，请重试；证据尚未写入",
+      "seconds": 15.59,
+      "calls": [
+        {
+          "seconds": 15.38,
+          "usage": {
+            "completion_tokens": 682,
+            "prompt_tokens": 1848,
+            "total_tokens": 2530,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1792
+            }
+          },
+          "finishReason": "stop"
+        }
+      ],
+      "outputs": [
+        {
+          "task": "project_review",
+          "result": {
+            "feedback": "代码展示了一个 POST 接口：接收 dict 载荷、校验 name 缺失时返回 400，成功返回 201 并给出 JSON 内容，符合 Request/Response、POST 用法、状态码含义和媒体类型(Headers)证据。Cookie/Session 你明确说明未实现，属于诚实交代但不构成该点证据，留作缺口。运行记录写明未实际运行，因此不引用任何运行结果。追问只核对这段代码现状的分支意图。",
+            "points": [
+              {
+                "pointId": "request",
+                "passed": true,
+                "answerQuote": "def add_item(payload: dict):\n    if not payload.get('name'):\n        return JSONResponse(status_code=400, content={'error': 'missing name'})\n    return JSONResponse(status_code=201, content={'name': payload['name']})",
+                "reason": "代码显式接收请求载荷并返回 JSONResponse 响应，具体展示接收请求与返回响应。"
+              },
+              {
+                "pointId": "methods",
+                "passed": true,
+                "answerQuote": "@app.post('/items')",
+                "reason": "使用 POST 处理提交的 items 内容，解释中说明 POST 接收 JSON 数据，符合单一 POST 的用途说明要求。"
+              },
+              {
+                "pointId": "status",
+                "passed": true,
+                "answerQuote": "缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+                "reason": "材料出现 400 并解释为客户端请求不合法，含义正确；400/500 点要求至少一个正确解释即可。"
+              },
+              {
+                "pointId": "headers",
+                "passed": true,
+                "answerQuote": "JSONResponse 设置 JSON 媒体类型。",
+                "reason": "解释了 JSON 媒体类型即 Content-Type 响应头用途，按项目规则应通过 Headers 点，不额外强求其他头部。"
+              },
+              {
+                "pointId": "session",
+                "passed": false,
+                "answerQuote": "这段代码没有实现 Cookie 或 Session。",
+                "reason": "明确说明未实现 Cookie/Session，这不是通过证据，该点留作缺口。"
+              }
+            ],
+            "question": {
+              "text": "这段代码里，当 payload 里带了 name 但值为空字符串 '' 时，add_item 会走哪个分支、返回什么状态码和内容？请结合 payload.get('name') 的判断方式说明当前代码在这个输入下的实际行为。",
+              "code": "if not payload.get('name'):\n        return JSONResponse(status_code=400, content={'error': 'missing name'})",
+              "pointIds": [
+                "status",
+                "request"
+              ],
+              "expectedAnswer": "空字符串 '' 为假值，payload.get('name') 返回 ''，not '' 为真，因此走第一个分支，返回 status_code=400、内容 {'error': 'missing name'}；即当前代码把空字符串也当作 name 缺失处理，而不是进入 201 分支。这只依据给出的判断逻辑推导，不表示实际运行验证。",
+              "mode": "implementation"
+            },
+            "runResultQuote": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "project_submitted_result",
+      "ok": false,
+      "error": "项目追问引入了未提交的替换代码，请重试；证据尚未写入",
+      "seconds": 37.29,
+      "calls": [
+        {
+          "seconds": 23.6,
+          "usage": {
+            "completion_tokens": 919,
+            "prompt_tokens": 1872,
+            "total_tokens": 2791,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1792
+            }
+          },
+          "finishReason": "stop"
+        },
+        {
+          "seconds": 12.44,
+          "usage": {
+            "completion_tokens": 604,
+            "prompt_tokens": 1872,
+            "total_tokens": 2476,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1792
+            }
+          },
+          "finishReason": "stop"
+        }
+      ],
+      "outputs": [
+        {
+          "task": "project_review",
+          "result": {
+            "feedback": "材料完整展示了请求接收、字段校验、错误返回和创建成功的响应，状态码 400/201 解释正确，Content-Type/媒体类型说明符合 Headers 证据标准。Cookie/Session 仅说明未实现，属于已知缺口而非通过证据。后续可补一份 Cookie/Session 的具体机制说明。runRecord 记录了 pytest 结果，仅照录，不视为系统验证。",
+            "points": [
+              {
+                "pointId": "request",
+                "passed": true,
+                "answerQuote": "POST 接收 JSON 数据，缺少 name 是客户端请求不合法，返回400。成功创建返回201，JSONResponse 设置 JSON 媒体类型。",
+                "reason": "代码中接收 payload 并返回 JSONResponse，解释具体说明了请求解析与响应返回，满足 Request/Response 证据要求。"
+              },
+              {
+                "pointId": "methods",
+                "passed": true,
+                "answerQuote": "POST 接收 JSON 数据，缺少 name 是客户端请求不合法，返回400。",
+                "reason": "材料说明了 POST 接收 JSON 并处理创建语义，单接口不要求补造 GET。"
+              },
+              {
+                "pointId": "status",
+                "passed": true,
+                "answerQuote": "缺少 name 是客户端请求不合法，返回400。成功创建返回201",
+                "reason": "对实际出现的 400 和 201 含义解释正确，满足至少一个实际状态码及其含义。"
+              },
+              {
+                "pointId": "headers",
+                "passed": true,
+                "answerQuote": "JSONResponse 设置 JSON 媒体类型。",
+                "reason": "明确解释了 JSON 媒体类型即 Content-Type 响应头用途，符合项目判定标准，不要求额外头部。"
+              },
+              {
+                "pointId": "session",
+                "passed": false,
+                "answerQuote": "这段代码没有实现 Cookie 或 Session。",
+                "reason": "材料明确说明未实现 Cookie/Session，这只是缺口，不能作为该机制的真实材料或具体解释，故未通过。"
+              }
+            ],
+            "question": {
+              "text": "这段代码里，payload 缺少 name 时为什么会走返回 400 的分支，而成功路径返回 201？请结合这段代码的判断顺序说明。",
+              "code": "if not payload.get('name'):\n        return JSONResponse(status_code=400, content={'error': 'missing name'})\n    return JSONResponse(status_code=201, content={'name': payload['name']})",
+              "pointIds": [
+                "status",
+                "request"
+              ],
+              "expectedAnswer": "name 为空或缺失时，payload.get('name') 为假值，命中第一个分支返回 400，表示请求不合法；否则进入后续分支创建结果并返回 201，表示成功创建。",
+              "mode": "implementation"
+            },
+            "runResultQuote": "pytest: 3 passed in 0.12s，缺少name返回400，创建成功201，Content-Type为application/json。"
+          }
+        }
+      ]
+    }
+  ],
+  "totalCalls": 7,
+  "totalTokens": 17581,
+  "casesPassed": 2,
+  "casesTotal": 4,
+  "gradingLabelsCorrect": 0,
+  "gradingLabelsTotal": 0
+}

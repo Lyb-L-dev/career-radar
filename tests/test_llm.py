@@ -11,6 +11,7 @@ from career_radar.llm import (
     DeepSeekProvider,
     FatalLLMError,
     LLMProvider,
+    MiMoProvider,
     PageAnalyzer,
     RetryableLLMError,
     _request_error,
@@ -42,6 +43,7 @@ class FakeProvider(LLMProvider):
                 JobPosting(
                     title="算法工程师",
                     description=f"第 {self.calls} 段 JD",
+                    source_job_id="untrusted-model-guessed-id",
                     apply_url="https://evil.example/fake",
                     match_level=MatchLevel.HIGH,
                     match_reason="明确面向 2026 届",
@@ -128,6 +130,43 @@ def test_request_error_classification(status: int, code: str, expected_type: typ
     assert isinstance(_request_error("测试供应商", SDKError("boom")), expected_type)
 
 
+def test_mimo_uses_official_chat_json_request_without_deepseek_key(monkeypatch) -> None:
+    calls: list[dict] = []
+    client_options: dict = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content=json.dumps({"page_type": "no_jobs", "contains_recruitment_info": False,
+                                    "jobs": [], "follow_links": []})
+            ))])
+
+    def fake_client(**kwargs):
+        client_options.update(kwargs)
+        return SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+
+    monkeypatch.setattr(openai, "OpenAI", fake_client)
+    monkeypatch.setenv("XIAOMIMIMO_API_KEY", "mimo-unit-test-key")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    provider = create_provider(LLMConfig(
+        provider="mimo", model="mimo-v2.6-pro", max_output_tokens=2048,
+        disable_thinking=True,
+    ))
+
+    assert isinstance(provider, MiMoProvider)
+    assert client_options["base_url"] == "https://api.xiaomimimo.com/v1"
+    assert client_options["api_key"] == "mimo-unit-test-key"
+    assert provider.analyze("测试") == PageAnalysis(
+        page_type="no_jobs", contains_recruitment_info=False
+    )
+    assert calls[0]["model"] == "mimo-v2.6-pro"
+    assert calls[0]["response_format"] == {"type": "json_object"}
+    assert calls[0]["max_completion_tokens"] == 2048
+    assert "max_tokens" not in calls[0]
+    assert calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
 def test_analyzer_chunks_rejects_hallucination_and_recovers_page_apply_url() -> None:
     provider = FakeProvider()
     config = LLMConfig(
@@ -147,6 +186,7 @@ def test_analyzer_chunks_rejects_hallucination_and_recovers_page_apply_url() -> 
     assert provider.calls > 1
     assert analysis.jobs[0].company == "测试公司"
     assert analysis.jobs[0].source_url == "https://example.com/jobs/1"
+    assert analysis.jobs[0].source_job_id is None
     # 模型虚构的跨站 URL 被丢弃，但页面真实存在的申请锚点会被确定性补回。
     assert analysis.jobs[0].apply_url == "https://example.com/apply/1"
     assert "第 1 段" in analysis.jobs[0].description

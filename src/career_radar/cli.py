@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
@@ -58,6 +59,9 @@ def _parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("check-config", parents=[common], help="只校验配置，不访问网络")
+    screening = subparsers.add_parser("screen-jobs", parents=[common], help="对已采集官网岗位做资格筛选和 AI 方向排序")
+    screening.add_argument("--company", action="append", default=[], help="仅评估指定公司；默认所有官网岗位")
+    screening.add_argument("--force", action="store_true", help="重新调用模型而不复用当前结果")
     subparsers.add_parser("init-db", parents=[common], help="初始化 SQLite 数据库")
     subparsers.add_parser(
         "merge-duplicates",
@@ -95,7 +99,7 @@ def _parser() -> argparse.ArgumentParser:
         help="评估岗位并在人工批准后生成、双审和修订申请材料正文",
     )
     action = apply.add_mutually_exclusive_group(required=True)
-    action.add_argument("--job-id", help="从 SQLite 真实岗位创建任务并执行 DeepSeek 评估")
+    action.add_argument("--job-id", help="从 SQLite 真实岗位创建任务并执行当前 LLM 评估")
     action.add_argument("--evaluate", metavar="APPLICATION_ID", help="评估已有 created 任务")
     action.add_argument(
         "--approve",
@@ -110,7 +114,7 @@ def _parser() -> argparse.ArgumentParser:
     apply.add_argument(
         "--prepare-only",
         action="store_true",
-        help="仅与 --job-id 配合：冻结任务但暂不调用 DeepSeek",
+        help="仅与 --job-id 配合：冻结任务但暂不调用当前 LLM",
     )
     return parser
 
@@ -125,6 +129,31 @@ def main(argv: list[str] | None = None) -> int:
             enabled = sum(company.enabled for company in settings.companies)
             print(f"配置有效：共 {len(settings.companies)} 家公司，启用 {enabled} 家。")
             return 0
+        if args.command == "screen-jobs":
+            from .official_screening_service import OfficialScreeningManager
+            from .web_repository import WebRepository
+
+            repository = WebRepository(Path(args.config))
+            repository.initialize()
+            manager = OfficialScreeningManager(repository)
+            ids = None
+            if args.company:
+                ids = [job["id"] for job in repository.list_jobs() if job["companyName"] in args.company]
+                if not ids:
+                    raise ValueError("指定公司没有已采集的官网岗位")
+            try:
+                manager.start(ids, force=args.force)
+                previous = None
+                while True:
+                    state = manager.status()
+                    if state != previous:
+                        print(json.dumps(state, ensure_ascii=False), flush=True)
+                        previous = state
+                    if state["status"] != "running":
+                        return 0 if state["status"] == "completed" else 1
+                    time.sleep(1)
+            finally:
+                manager.shutdown()
         if args.command == "init-db":
             JobStorage(settings.app.database_path).initialize()
             print(f"数据库已初始化：{settings.app.database_path}")
@@ -163,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
             from .application.document_verifier import ApplicationDocumentVerifier
             from .application.document_workflow import ApplicationDocumentWorkflow
             from .application.evaluator import JobApplicationEvaluator
-            from .application.llm import DeepSeekApplicationGateway
+            from .application.llm import CompatibleApplicationGateway
             from .application.repository import ApplicationRepository
             from .application.service import ApplicationService
             from .application.workflow import ApplicationWorkflow
@@ -182,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             def get_workflow() -> ApplicationWorkflow:
                 nonlocal workflow
                 if workflow is None:
-                    gateway = DeepSeekApplicationGateway(settings.llm)
+                    gateway = CompatibleApplicationGateway(settings.llm)
                     workflow = ApplicationWorkflow(
                         repository,
                         JobApplicationEvaluator(gateway),

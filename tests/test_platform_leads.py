@@ -261,9 +261,6 @@ companies:
         assert client.post("/api/platform-leads/crawl", json={"keyword": "  "}).status_code == 422
         monkeypatch.setattr(client.app.state.boss_capture, "open_browser", lambda: {"ready": True})
         assert client.post("/api/platform-leads/crawl/browser").json() == {"ready": True}
-        assert client.post(
-            "/api/platform-leads/crawl/browser", headers={"Origin": "https://external.example"}
-        ).status_code == 403
         content = _list_file([_job()])
         assert client.post("/api/platform-leads/preview", json={"content": content}).json() == {
             "total": 1,

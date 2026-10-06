@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .embeddings import jaccard_similarity, job_embedding_text, pack_vector, unpack_vector
@@ -20,7 +20,7 @@ from .job_merge import (
 )
 from .models import JobPosting, StoredJobEvent
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 12
 _SEMANTIC_DUPLICATE_THRESHOLD = 0.6
 
 
@@ -88,6 +88,32 @@ def _migration_page_visit_cache_status(connection: sqlite3.Connection) -> None:
 @_migration(9, "web_job_state 增加 ignored_content_hash")
 def _migration_job_state_ignored_hash(connection: sqlite3.Connection) -> None:
     _ensure_column(connection, "web_job_state", "ignored_content_hash", "TEXT")
+
+
+def _create_report_email_deliveries(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS report_email_deliveries (
+            report_date TEXT PRIMARY KEY,
+            event_count INTEGER NOT NULL,
+            sent_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_report_email_deliveries_sent_at
+            ON report_email_deliveries(sent_at DESC);
+        """
+    )
+
+
+@_migration(11, "增加历史日报邮件发送记录")
+def _migration_report_email_deliveries(connection: sqlite3.Connection) -> None:
+    _create_report_email_deliveries(connection)
+
+
+@_migration(12, "增加成长目标、测评证据、复习和每日计划")
+def _migration_growth(connection: sqlite3.Connection) -> None:
+    from .growth.schema import create_growth_schema
+
+    create_growth_schema(connection)
 
 
 def _normalized(value: str | None) -> str:
@@ -166,6 +192,8 @@ def compute_job_hashes(job: JobPosting) -> tuple[str, str, str, str]:
             )
         )
     )
+    if job.source_job_id:
+        entity_key = _sha256("|".join((job.record_type, _normalized(job.company), job.source_job_id)))
     content_json = json.dumps(job.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
     content_hash = _sha256(content_json)
     return entity_key, fingerprint, jd_prefix_hash, content_hash
@@ -275,6 +303,14 @@ class JobStorage:
                 );
                 CREATE INDEX IF NOT EXISTS idx_web_runs_started_at
                     ON web_runs(started_at DESC);
+
+                CREATE TABLE IF NOT EXISTS report_email_deliveries (
+                    report_date TEXT PRIMARY KEY,
+                    event_count INTEGER NOT NULL,
+                    sent_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_report_email_deliveries_sent_at
+                    ON report_email_deliveries(sent_at DESC);
 
                 CREATE TABLE IF NOT EXISTS web_notification_state (
                     notification_id TEXT PRIMARY KEY,
@@ -465,6 +501,16 @@ class JobStorage:
                 CREATE INDEX IF NOT EXISTS idx_job_reputation_evidence_platform
                     ON job_reputation_evidence(platform, scan_id);
 
+                CREATE TABLE IF NOT EXISTS official_job_assessments (
+                    entity_key TEXT PRIMARY KEY,
+                    context_hash TEXT NOT NULL,
+                    payload_json TEXT,
+                    error TEXT,
+                    model TEXT NOT NULL,
+                    evaluated_at TEXT NOT NULL,
+                    FOREIGN KEY(entity_key) REFERENCES jobs(entity_key) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS application_runs (
                     application_id TEXT PRIMARY KEY,
                     job_entity_key TEXT NOT NULL,
@@ -550,6 +596,7 @@ class JobStorage:
             # 历史手写 ALTER 已收敛为有序迁移（见模块顶部 MIGRATIONS）；
             # 这里只按 PRAGMA user_version 应用尚未执行的迁移。
             if version == 0:
+                _migration_growth(connection)
                 # 全新数据库：基线脚本已包含当前全部表结构，无需回放历史迁移。
                 version = SCHEMA_VERSION
             for migration in MIGRATIONS:
@@ -627,19 +674,25 @@ class JobStorage:
         connection: sqlite3.Connection,
         job: JobPosting,
     ) -> list[tuple[sqlite3.Row, JobPosting]]:
-        """只加载同公司同名候选，再用共享身份规则做内存判定。"""
+        """优先官方 ID，兼容旧无 ID 同名记录，升级时保留收藏/申请主键。"""
 
-        rows = connection.execute(
-            """
+        query = """
             SELECT entity_key, content_hash, payload_json, first_seen_at
-            FROM jobs WHERE company = ? AND title = ?
-            ORDER BY first_seen_at ASC
-            """,
-            (job.company, job.title),
-        ).fetchall()
+            FROM jobs WHERE company = ?
+        """
+        parameters = (job.company,)
+        if not job.source_job_id:
+            query += " AND title = ?"
+            parameters = (job.company, job.title)
+        rows = connection.execute(query + " ORDER BY first_seen_at ASC", parameters).fetchall()
         matches: list[tuple[sqlite3.Row, JobPosting]] = []
+        exact_ids: list[tuple[sqlite3.Row, JobPosting]] = []
         for row in rows:
             previous = JobPosting.model_validate_json(row["payload_json"])
+            if job.source_job_id and previous.source_job_id:
+                if job.source_job_id == previous.source_job_id:
+                    exact_ids.append((row, previous))
+                continue
             if is_same_job(
                 job,
                 previous,
@@ -647,7 +700,9 @@ class JobStorage:
                 require_shared_url=True,
             ):
                 matches.append((row, previous))
-        return matches
+        if not job.source_job_id and len({previous.source_job_id for _row, previous in matches if previous.source_job_id}) > 1:
+            raise ValueError("同名官方岗位有多个 ID，本次记录缺少 ID，不能安全合并")
+        return exact_ids or matches
 
     def _semantic_identity_matches(
         self,
@@ -662,7 +717,7 @@ class JobStorage:
         地点缺失时提高阈值，避免把不同岗位误合并。
         """
 
-        if window_days <= 0:
+        if window_days <= 0 or incoming.source_job_id:
             return []
         rows = connection.execute(
             """
@@ -676,6 +731,8 @@ class JobStorage:
         matches: list[tuple[sqlite3.Row, JobPosting, float]] = []
         for row in rows:
             previous = JobPosting.model_validate_json(row["payload_json"])
+            if previous.source_job_id:
+                continue
             if is_same_job(
                 incoming,
                 previous,
@@ -815,7 +872,12 @@ class JobStorage:
             (previous for _row, previous in matches),
             key=lambda item: len(item.description) + len(item.requirements or ""),
         )
-        job = preserve_richer_previous_content(incoming, richest_previous)
+        authoritative_incoming = bool(incoming.source_job_id)
+        if not incoming.source_job_id:
+            known_id = next((previous.source_job_id for _row, previous in matches if previous.source_job_id), None)
+            if known_id:
+                incoming = incoming.model_copy(update={"source_job_id": known_id})
+        job = incoming if authoritative_incoming else preserve_richer_previous_content(incoming, richest_previous)
         for row, _previous in matches[1:]:
             duplicate_key = row["entity_key"]
             if duplicate_key != canonical_key:
@@ -949,6 +1011,33 @@ class JobStorage:
             ).fetchall()
         return [JobPosting.model_validate_json(row["payload_json"]) for row in rows]
 
+    def load_events_for_date(self, report_date: date) -> list[StoredJobEvent]:
+        """按检测日期恢复当时的完整岗位事件，用于本地历史日报投递。"""
+
+        self.initialize()
+        start = report_date.isoformat()
+        end = (report_date + timedelta(days=1)).isoformat()
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT event_type, payload_json, entity_key, fingerprint, detected_at
+                FROM job_history
+                WHERE detected_at >= ? AND detected_at < ?
+                ORDER BY id ASC
+                """,
+                (start, end),
+            ).fetchall()
+        return [
+            StoredJobEvent(
+                event_type=row["event_type"],
+                job=JobPosting.model_validate_json(row["payload_json"]),
+                entity_key=row["entity_key"],
+                fingerprint=row["fingerprint"],
+                detected_at=row["detected_at"],
+            )
+            for row in rows
+        ]
+
     def ensure_job_embeddings(
         self,
         provider: str,
@@ -1042,6 +1131,8 @@ class JobStorage:
                         row_b, job_b = items[other_index]
                         key_a, key_b = row_a["entity_key"], row_b["entity_key"]
                         if key_a in removed or key_b in removed:
+                            continue
+                        if job_a.source_job_id or job_b.source_job_id:
                             continue
                         if (
                             job_a.location

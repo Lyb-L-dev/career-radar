@@ -27,6 +27,56 @@ def _job(description: str) -> JobPosting:
     )
 
 
+def test_authoritative_ats_ids_keep_similar_distinct_jobs_and_survive_rename(tmp_path: Path) -> None:
+    storage = JobStorage(tmp_path / "jobs.db", semantic_duplicate_window_days=90)
+    storage.initialize()
+    base = _job("负责 AI 产品研发与交付，搭建 Agent 工作流，完成数据分析与接口联调。")
+    first = base.model_copy(update={"source_job_id": "json_feed:example.com:1"})
+    second = base.model_copy(update={"source_job_id": "json_feed:example.com:2", "title": "AI 研发与交付工程师"})
+
+    events = storage.store_jobs([first, second], "2026-10-04T12:00:00+08:00")
+    renamed = first.model_copy(update={"title": "FDE 工程师", "description": "新的明确职责。"})
+    updated = storage.store_jobs([renamed], "2026-10-04T13:00:00+08:00")
+
+    assert [event.event_type for event in events] == ["new", "new"]
+    assert updated[0].entity_key == events[0].entity_key
+    assert updated[0].event_type == "updated"
+    assert updated[0].job.description == "新的明确职责。"
+    assert len(storage.load_all_jobs()) == 2
+    assert storage.merge_duplicate_jobs(90) == []
+
+
+def test_adding_official_id_upgrades_legacy_job_without_changing_entity_key(tmp_path: Path) -> None:
+    storage = JobStorage(tmp_path / "jobs.db", semantic_duplicate_window_days=90)
+    storage.initialize()
+    legacy = _job("旧版正文" * 100)
+    initial = storage.store_jobs([legacy], "2026-10-04T12:00:00+08:00")[0]
+    authoritative = legacy.model_copy(update={"source_job_id": "json_feed:example.com:1", "description": "官网完整新正文"})
+
+    upgraded = storage.store_jobs([authoritative], "2026-10-04T13:00:00+08:00")[0]
+    repeated = storage.store_jobs([authoritative], "2026-10-04T14:00:00+08:00")[0]
+
+    assert upgraded.entity_key == initial.entity_key
+    assert upgraded.job.source_job_id == authoritative.source_job_id
+    assert upgraded.job.description == "官网完整新正文"
+    assert repeated.event_type == "unchanged"
+    assert len(storage.load_all_jobs()) == 1
+
+
+def test_unidentified_record_cannot_collapse_two_same_title_official_ids(tmp_path: Path) -> None:
+    storage = JobStorage(tmp_path / "jobs.db")
+    storage.initialize()
+    base = _job("相同职位正文")
+    storage.store_jobs([
+        base.model_copy(update={"source_job_id": "ats:1"}),
+        base.model_copy(update={"source_job_id": "ats:2"}),
+    ], "2026-10-04T12:00:00+08:00")
+
+    with pytest.raises(ValueError, match="多个 ID"):
+        storage.store_jobs([base], "2026-10-04T13:00:00+08:00")
+    assert len(storage.load_all_jobs()) == 2
+
+
 def test_new_unchanged_and_updated(tmp_path: Path) -> None:
     storage = JobStorage(tmp_path / "jobs.db")
     storage.initialize()
@@ -251,6 +301,10 @@ def test_schema_contains_page_visit_and_candidate_state_tables(tmp_path: Path) -
             "SELECT name FROM sqlite_master "
             "WHERE type='table' AND name='wechat_recruitment_articles'"
         ).fetchone()
+        report_delivery_table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='report_email_deliveries'"
+        ).fetchone()
         version = connection.execute("PRAGMA user_version").fetchone()[0]
 
     assert table == ("web_page_visits",)
@@ -261,7 +315,8 @@ def test_schema_contains_page_visit_and_candidate_state_tables(tmp_path: Path) -
     assert wechat_account_table == ("company_wechat_accounts",)
     assert wechat_scan_table == ("wechat_recruitment_scans",)
     assert wechat_article_table == ("wechat_recruitment_articles",)
-    assert version == 10
+    assert report_delivery_table == ("report_email_deliveries",)
+    assert version == 12
 
 
 def test_version_six_candidate_state_is_upgraded_without_losing_rows(
@@ -302,4 +357,4 @@ def test_version_six_candidate_state_is_upgraded_without_losing_rows(
     assert row["note"] == "保留我"
     assert row["recruitment_channel_status"] == "official_site_pending"
     assert row["attribution_keywords_json"] is None
-    assert version == 10
+    assert version == 12

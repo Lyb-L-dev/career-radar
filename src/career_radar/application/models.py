@@ -317,7 +317,7 @@ class RequirementCoverage(BaseModel):
 
 
 class JobFitEvaluation(BaseModel):
-    """第二阶段 DeepSeek 必须返回的结构化岗位评估契约。"""
+    """第二阶段 LLM 必须返回的结构化岗位评估契约。"""
 
     model_config = ConfigDict(extra="forbid")
 

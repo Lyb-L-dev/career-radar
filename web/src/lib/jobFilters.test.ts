@@ -10,6 +10,16 @@ import {
 describe('job filter persistence', () => {
   beforeEach(() => window.localStorage.clear())
 
+  it('defaults to priority and retains unknown eligibility instead of excluding it', () => {
+    const initial = jobFilterValuesFromParams(new URLSearchParams())
+    expect(initial.tab).toBe('all')
+    expect(initial.eligibility).toBe('available')
+    expect(initial.sort).toBe('priority')
+    const invalid = jobFilterValuesFromParams(new URLSearchParams('eligibility=garbage&sort=garbage'))
+    expect(invalid.eligibility).toBe('available')
+    expect(invalid.sort).toBe('priority')
+  })
+
   it('round-trips active filters through URL parameters', () => {
     const values = {
       ...jobFilterValuesFromParams(new URLSearchParams()),
@@ -36,4 +46,3 @@ describe('job filter persistence', () => {
     expect(loadSavedJobFilters()).toEqual(values)
   })
 })
-

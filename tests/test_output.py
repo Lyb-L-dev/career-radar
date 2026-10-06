@@ -1,6 +1,6 @@
 """Markdown 完整 JD 与 CSV Excel 安全输出测试。"""
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -11,7 +11,30 @@ from career_radar.models import (
     ProfileFitLevel,
     StoredJobEvent,
 )
-from career_radar.output import ReportWriter
+from career_radar.output import ReportWriter, prune_expired_reports
+
+
+def test_prune_expired_reports_only_removes_strictly_expired_daily_files(
+    tmp_path: Path,
+) -> None:
+    expired = [
+        tmp_path / "2026-07-10-jobs.md",
+        tmp_path / "2026-07-10-jobs.csv",
+    ]
+    retained = [
+        tmp_path / "2026-07-11-jobs.md",
+        tmp_path / "2099-01-01-jobs.csv",
+        tmp_path / "2026-99-99-jobs.md",
+        tmp_path / "notes.md",
+    ]
+    for path in expired + retained:
+        path.write_text("test", encoding="utf-8")
+
+    removed = prune_expired_reports(tmp_path, 30, today=date(2026, 8, 10))
+
+    assert removed == 2
+    assert all(not path.exists() for path in expired)
+    assert all(path.is_file() for path in retained)
 
 
 def test_report_contains_full_jd_and_csv_bom(tmp_path: Path) -> None:

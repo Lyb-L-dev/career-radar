@@ -103,6 +103,61 @@ def test_monitor_service_stores_each_company_before_next_callback(
     assert result.new_jobs == 2
 
 
+def test_monitor_service_prunes_expired_reports_after_each_real_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _settings(tmp_path)
+    settings.app.report_retention_days = 7
+    settings.app.output_dir.mkdir(parents=True)
+    expired = settings.app.output_dir / "2020-01-01-jobs.md"
+    unrelated = settings.app.output_dir / "notes.md"
+    expired.write_text("old", encoding="utf-8")
+    unrelated.write_text("keep", encoding="utf-8")
+
+    monkeypatch.setattr(pipeline_module, "create_provider", lambda _config: object())
+    monkeypatch.setattr(pipeline_module, "PageFetcher", DummyFetcher)
+    monkeypatch.setattr(
+        pipeline_module.CompanyMonitor,
+        "crawl",
+        lambda self, company, on_page_progress=None, should_cancel=None: CompanyRunResult(
+            company=company.name
+        ),
+    )
+
+    result = MonitorService(settings).run(disable_email=True)
+
+    assert result.companies_processed == 2
+    assert not expired.exists()
+    assert unrelated.is_file()
+
+
+def test_report_retention_failure_is_recorded_without_aborting_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(pipeline_module, "create_provider", lambda _config: object())
+    monkeypatch.setattr(pipeline_module, "PageFetcher", DummyFetcher)
+    monkeypatch.setattr(
+        pipeline_module.CompanyMonitor,
+        "crawl",
+        lambda self, company, on_page_progress=None, should_cancel=None: CompanyRunResult(
+            company=company.name
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "prune_expired_reports",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("locked")),
+    )
+
+    result = MonitorService(settings).run(disable_email=True)
+
+    assert result.companies_processed == 2
+    assert any("历史日报自动清理失败" in error for error in result.errors)
+
+
 def test_monitor_service_stops_before_the_next_company(
     tmp_path: Path,
     monkeypatch,
@@ -281,6 +336,44 @@ def test_incremental_scan_reuses_analysis_when_content_hash_is_unchanged(
     assert analyzer.calls == 1
     assert events[-1]["cacheStatus"] == "content_unchanged"
     assert events[-1]["llmExtracted"] is False
+
+
+def test_company_entry_wait_selector_applies_only_to_start_page(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    company = settings.companies[0]
+    company.entry_wait_selector = ".job-list"
+    seen: list[tuple[str, str | None]] = []
+
+    class Fetcher:
+        def fetch(
+            self,
+            url: str,
+            _headers: dict[str, str] | None = None,
+            *,
+            wait_selector: str | None = None,
+        ) -> FetchedPage:
+            seen.append((url, wait_selector))
+            html = (
+                '<a href="/jobs/1001">查看职位</a>'
+                if url == company.url
+                else "<main>岗位职责：开发系统</main>"
+            )
+            return FetchedPage(url, url, html, False, 200)
+
+    class Analyzer:
+        def analyze_page(self, _company, url, _document, *_args, **_kwargs) -> PageAnalysis:
+            return PageAnalysis(
+                page_type="career_home" if url == company.url else "job_detail",
+                contains_recruitment_info=True,
+            )
+
+    monitor = CompanyMonitor(settings, Fetcher(), Analyzer())  # type: ignore[arg-type]
+    monitor.crawl(company)
+
+    assert seen == [
+        ("https://a.example/jobs", ".job-list"),
+        ("https://a.example/jobs/1001", None),
+    ]
 
 
 def test_analysis_budget_enforces_a_hard_per_run_limit() -> None:

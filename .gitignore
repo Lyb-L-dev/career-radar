@@ -10,6 +10,7 @@ __pycache__/
 *.tmp
 data/*.db
 data/*.db-*
+data/*.log
 output/*.md
 output/*.csv
 logs/*.log

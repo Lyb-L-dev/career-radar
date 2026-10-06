@@ -16,6 +16,7 @@ from ..embeddings import (
     feature_hash_vector,
 )
 from ..models import JobPosting, ProfileFitLevel, Settings
+from ..official_screening_service import assessment_view
 from ..storage import JobStorage
 from .common import (
     JOB_SELECT,
@@ -28,14 +29,26 @@ from .common import (
 
 
 class JobsMixin:
+    def _assessment_map(self, settings: Settings) -> dict[str, dict]:
+        with self.transaction(settings) as connection:
+            try:
+                rows = connection.execute("SELECT * FROM official_job_assessments").fetchall()
+            except sqlite3.OperationalError as exc:
+                if "no such table" in str(exc):
+                    return {}
+                raise
+        return {row["entity_key"]: dict(row) for row in rows}
+
     def _job_json(
         self,
         row: sqlite3.Row,
         *,
         settings: Settings,
         history: list[dict[str, Any]] | None = None,
+        assessment: dict | None = None,
     ) -> dict[str, Any]:
         job = JobPosting.model_validate_json(row["payload_json"])
+        screening = assessment_view(job, settings.candidate, settings.llm.model, assessment)
         configured_company = next(
             (company for company in settings.companies if company.name == job.company),
             None,
@@ -60,6 +73,21 @@ class JobsMixin:
             else ("通过官网申请链接投递" if job.apply_url else "请查看职位来源页面确认投递方式")
         )
         host = urlsplit(job.source_url).netloc or "企业官网"
+        direct_extraction = job.profile_fit_reason.startswith("已从官网直接提取")
+        ats_extraction = bool(
+            configured_company
+            and configured_company.ats_source
+            and configured_company.ats_source.enabled
+        )
+        source_method = (
+            "官方招聘系统公开接口直接提取"
+            if ats_extraction
+            else (
+                "官网页面字段直接提取，能力匹配待评估"
+                if direct_extraction
+                else "公开页面抓取 + LLM 结构化提取"
+            )
+        )
         latest_event = row["latest_event"] or "new"
         current_update_ignored = (
             latest_event == "updated"
@@ -83,6 +111,15 @@ class JobsMixin:
             }
         ]
         profile_level = job.profile_fit_level.value
+        fit = screening["aiAssessment"]["result"]
+        if fit:
+            # 能力匹配保持独立，资格冲突只阻止推荐/投递优先级，不改写技能分。
+            score = round(fit["direction_score"] * 0.4 + fit["evidence_score"] * 0.6)
+            if fit["direction"] == "other":
+                score = min(score, 40)
+            profile_level = "high" if score >= 70 else "medium" if score >= 45 else "low"
+        elif screening["aiAssessment"]["status"] in {"stale", "failed"}:
+            profile_level = "unknown"
         advice = {
             ProfileFitLevel.HIGH.value: "岗位与当前画像高度相关，建议优先核验有效期并准备针对性材料。",
             ProfileFitLevel.MEDIUM.value: "存在可补足差距，建议根据任职要求完善项目证据后投递。",
@@ -111,9 +148,10 @@ class JobsMixin:
             "city": job.location or "地点未提供",
             "type": _job_type(job),
             "status": status,
-            "gradYearMatch": job.match_level.value,
+            "gradYearMatch": {"met": "high", "unmet": "low", "unknown": "unknown"}[next(c["verdict"] for c in screening["eligibility"]["checks"] if c["dimension"] == "cohort")],
             "abilityMatch": profile_level,
             "difficulty": job.difficulty_score,
+            "difficultyEvaluated": job.profile_fit_level != ProfileFitLevel.UNKNOWN and screening["aiAssessment"]["status"] not in {"stale", "failed"},
             "isFavorite": bool(row["is_favorite"]),
             "isApplied": bool(row["is_applied"]),
             "notInterested": bool(row["not_interested"]),
@@ -123,8 +161,9 @@ class JobsMixin:
             "publishedAt": job.published_at,
             "firstSeenAt": row["first_seen_at"],
             "lastUpdatedAt": row["updated_at"],
-            "recommendReason": job.profile_fit_reason,
-            "highlyRecommended": job.match_level.value == "high" and profile_level == "high",
+            "recommendReason": fit["summary"] if fit else screening["eligibility"]["summary"],
+            "highlyRecommended": screening["priority"]["tier"] == "high",
+            **screening,
             "tags": list(dict.fromkeys(tags)),
             "overview": _short_text(job.description),
             "responsibilities": description_lines,
@@ -137,12 +176,12 @@ class JobsMixin:
             "jdIncompleteReason": job.jd_incomplete_reason,
             "contactEmail": contact_email,
             "analysis": {
-                "conclusion": job.profile_fit_reason,
+                "conclusion": fit["summary"] if fit else job.profile_fit_reason,
                 "hasSkills": has_skills,
                 # 不从关键词反推“缺失技能”，避免重现 LLM 把 JD 技能误算为候选人技能的问题。
                 "missingSkills": [],
-                "suggestions": [job.difficulty_reason] if job.difficulty_reason else [],
-                "advice": advice,
+                "suggestions": fit["next_steps"] if fit else [job.difficulty_reason] if job.difficulty_reason else [],
+                "advice": screening["priority"]["label"] if fit else advice,
             },
             "difficultyFactors": [
                 {
@@ -154,8 +193,10 @@ class JobsMixin:
             "source": {
                 "site": host,
                 "page": job.source_url,
-                "method": "公开页面抓取 + LLM 结构化提取",
-                "urlVerified": True,
+                "method": source_method,
+                "urlVerified": not (
+                    direct_extraction and host == "careers.emqx.com"
+                ),
                 "lastVerifiedAt": row["last_seen_at"],
             },
             "history": compact_history,
@@ -167,7 +208,11 @@ class JobsMixin:
             rows = connection.execute(
                 f"{JOB_SELECT} ORDER BY j.updated_at DESC"
             ).fetchall()
-        return [self._job_json(row, settings=settings) for row in rows]
+        assessments = self._assessment_map(settings)
+        jobs = [self._job_json(row, settings=settings, assessment=assessments.get(row["entity_key"])) for row in rows]
+        order = {"eligible": 0, "review": 1, "ineligible": 2}
+        jobs.sort(key=lambda job: (order[job["eligibility"]["verdict"]], -(job["priority"]["score"] if job["priority"]["score"] is not None else -1)))
+        return jobs
 
     def search_jobs(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """在 SQLite 中筛选岗位，避免搜索时反序列化完整岗位表。"""
@@ -186,7 +231,8 @@ class JobsMixin:
                 "LIMIT ?",
                 (pattern, pattern, pattern, limit),
             ).fetchall()
-        return [self._job_json(row, settings=settings) for row in rows]
+        assessments = self._assessment_map(settings)
+        return [self._job_json(row, settings=settings, assessment=assessments.get(row["entity_key"])) for row in rows]
 
     def get_job(self, entity_key: str) -> dict[str, Any] | None:
         settings = self.settings
@@ -198,7 +244,7 @@ class JobsMixin:
             if row is None:
                 return None
             history = self._history(connection, entity_key)
-        return self._job_json(row, settings=settings, history=history)
+        return self._job_json(row, settings=settings, history=history, assessment=self._assessment_map(settings).get(entity_key))
 
     def similar_jobs(self, job_id: str, limit: int = 5) -> list[dict[str, Any]]:
         """按本地语义向量返回与指定岗位最相似的岗位，结果带相似度分数。"""

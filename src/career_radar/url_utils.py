@@ -12,35 +12,23 @@ _TRACKING_PARAMETERS = {
     "spm",
 }
 
-# 列表页筛选器通常会产生“职位类别 × 城市 × 部门”的大量等价 URL。抓取队列
-# 只保留分页和具体岗位标识；原始 URL 仍会保存在页面记录中，不影响审计。
-_LIST_FILTER_PARAMETERS = {
-    "campus",
-    "category",
-    "city",
-    "department",
-    "jobcategory",
-    "jobtype",
-    "keyword",
-    "location",
-    "type",
-}
-_IDENTITY_PARAMETERS = {
-    "id",
-    "jobid",
-    "job_id",
-    "positionid",
-    "position_id",
-    "requisitionid",
-    "requisition_id",
-}
+def is_spa_route(url: str) -> bool:
+    """Hash-router paths select different views; ordinary page anchors do not."""
+
+    return urlsplit(url).fragment.startswith(("/", "!/"))
+
+
 def resolve_http_url(base_url: str, href: str) -> str | None:
     """把锚点转换为绝对 HTTP(S) URL，并排除脚本、邮件和电话链接。"""
 
     href = href.strip()
-    if not href or href.startswith(("#", "javascript:", "mailto:", "tel:", "data:")):
+    if not href or href.startswith(("javascript:", "mailto:", "tel:", "data:")):
         return None
-    absolute, _fragment = urldefrag(urljoin(base_url, href))
+    if href.startswith("#") and not is_spa_route(href):
+        return None
+    absolute = urljoin(base_url, href)
+    if not is_spa_route(absolute):
+        absolute, _fragment = urldefrag(absolute)
     parts = urlsplit(absolute)
     if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
         return None
@@ -64,9 +52,8 @@ def canonicalize_url(url: str) -> str:
     path = parts.path or "/"
     if path != "/":
         path = path.rstrip("/")
-    return urlunsplit(
-        (parts.scheme.lower(), parts.netloc.lower(), path, query, "")
-    )
+    fragment = parts.fragment if is_spa_route(url) else ""
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, query, fragment))
 
 
 def normalize_request_url(url: str) -> str:
@@ -82,15 +69,15 @@ def normalize_request_url(url: str) -> str:
     if original.path.endswith("/") and original.path != "/" and not path.endswith("/"):
         path += "/"
     return urlunsplit(
-        (canonical.scheme, canonical.netloc, path, canonical.query, "")
+        (canonical.scheme, canonical.netloc, path, canonical.query, canonical.fragment)
     )
 
 
 def canonicalize_crawl_url(url: str) -> str:
-    """生成抓取队列键，折叠空参数和列表筛选器组合。
+    """生成抓取队列键，保留决定岗位列表内容的筛选条件与 SPA 路由。
 
-    带非空岗位 ID 的详情 URL 原样保留；没有岗位 ID 时移除已知列表筛选器，
-    但保留 ``brandCode`` 等站点入口参数，避免把官网入口改写成错误页面。
+    空参数和广告参数仍可去掉；同路径不同条件的抓取数量由流水线限制，
+    不在请求前改写站点的职位类别、校招或城市条件。
     """
 
     canonical = canonicalize_url(url)
@@ -100,19 +87,8 @@ def canonicalize_crawl_url(url: str) -> str:
         for key, value in parse_qsl(parts.query, keep_blank_values=False)
         if value.strip()
     ]
-    has_identity = any(
-        key.casefold() in _IDENTITY_PARAMETERS and value.strip() for key, value in items
-    )
-    if has_identity:
-        kept = items
-    else:
-        kept = [
-            (key, value)
-            for key, value in items
-            if key.casefold() not in _LIST_FILTER_PARAMETERS
-        ]
     return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urlencode(sorted(kept), doseq=True), "")
+        (parts.scheme, parts.netloc, parts.path, urlencode(sorted(items), doseq=True), parts.fragment)
     )
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import {
   CommandDialog,
@@ -18,6 +18,7 @@ import { companyMatchesKeyword, jobMatchesKeyword } from '@/lib/jobSearch'
 
 const PAGES = [
   { label: '总览', to: '/', icon: LayoutDashboard },
+  { label: '成长计划', to: '/growth', icon: Activity },
   { label: '岗位中心', to: '/jobs', icon: Briefcase },
   { label: '企业监控', to: '/companies', icon: Building2 },
   { label: '优质企业候选库', to: '/company-candidates', icon: LibraryBig },
@@ -29,21 +30,10 @@ const PAGES = [
 ]
 
 /** 全局搜索弹窗：Ctrl/Cmd + K 唤起 */
-export function CommandPalette() {
-  const [open, setOpen] = useState(false)
+export function CommandPalette({ open, onOpenChange: setOpen }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [query, setQuery] = useState('')
+  const [returnFocus] = useState(() => document.activeElement)
   const navigate = useNavigate()
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setOpen((v) => !v)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
 
   const { data: jobs } = useJobs({ tab: 'all' })
   const { data: companies } = useCompanies()
@@ -77,7 +67,11 @@ export function CommandPalette() {
   }
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
+    <CommandDialog open={open} onOpenChange={setOpen} onCloseAutoFocus={(event) => {
+      event.preventDefault()
+      const target = returnFocus instanceof HTMLElement && returnFocus.isConnected ? returnFocus : document.getElementById('main-content')
+      target?.focus({ preventScroll: true })
+    }}>
       <CommandInput placeholder="搜索岗位、企业、技能关键词、城市、运行记录…" value={query} onValueChange={setQuery} />
       <CommandList>
         <CommandEmpty>
@@ -103,7 +97,7 @@ export function CommandPalette() {
           ))}
         </CommandGroup>
 
-        <CommandSeparator />
+        <CommandSeparator aria-hidden="true" />
         <CommandGroup heading="岗位">
           {filteredJobs.map((j) => (
             <CommandItem key={j.id} onSelect={() => go(`/jobs/${j.id}`)}>

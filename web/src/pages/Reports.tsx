@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import { FileText, FilePlus2, Download, Mail, FileSpreadsheet } from 'lucide-react'
@@ -23,8 +23,11 @@ import {
 } from '@/components/ui/table'
 import { PageHeader, Card } from '@/components/common/PageHeader'
 import { EmailStatusBadge, Pill } from '@/components/common/Badges'
-import { ListSkeleton, EmptyState, ErrorState } from '@/components/common/StateViews'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { ListSkeleton, EmptyState, ErrorState, NoResults } from '@/components/common/StateViews'
 import { useReports } from '@/hooks/useData'
+import { filterReports } from '@/lib/reportFilters'
+import type { ReportFileFilter } from '@/lib/reportFilters'
 import { downloadReport, resendReportEmail } from '@/services/reports'
 import { createRun } from '@/services/runs'
 
@@ -32,9 +35,21 @@ export default function ReportsPage() {
   const navigate = useNavigate()
   const { data: reports, isLoading, isError, refetch } = useReports()
   const [date, setDate] = useState('')
-  const [type, setType] = useState('all')
+  const [fileStatus, setFileStatus] = useState<ReportFileFilter>('all')
   const [matchedOnly, setMatchedOnly] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [resendDate, setResendDate] = useState<string | null>(null)
+  const [sendingDate, setSendingDate] = useState<string | null>(null)
+  const clearFilters = () => {
+    setDate('')
+    setFileStatus('all')
+    setMatchedOnly(false)
+  }
+  const hasFilters = Boolean(date || fileStatus !== 'all' || matchedOnly)
+  const filteredReports = useMemo(
+    () => filterReports(reports ?? [], { date, fileStatus, highMatchOnly: matchedOnly }),
+    [date, fileStatus, matchedOnly, reports],
+  )
 
   return (
     <div className="space-y-5">
@@ -66,31 +81,40 @@ export default function ReportsPage() {
 
       {/* 筛选 */}
       <Card padded={false} className="flex flex-wrap items-center gap-3 p-4">
-        <Input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="h-9 w-44 rounded-lg bg-surface-subtle border-black/[0.06]"
-        />
-        <Select value={type} onValueChange={setType}>
-          <SelectTrigger className="h-9 w-40 rounded-lg"><SelectValue placeholder="报告类型" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">全部类型</SelectItem>
-            <SelectItem value="daily">每日日报</SelectItem>
-            <SelectItem value="manual">手动生成</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="report-date" className="text-[13px] text-ink-secondary">日期</Label>
+          <Input
+            id="report-date"
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="h-9 w-44 rounded-lg bg-surface-subtle border-black/[0.06]"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="report-file-status" className="text-[13px] text-ink-secondary">文件</Label>
+          <Select value={fileStatus} onValueChange={(value) => setFileStatus(value as ReportFileFilter)}>
+            <SelectTrigger id="report-file-status" className="h-9 w-40 rounded-lg" aria-label="日报文件状态"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部状态</SelectItem>
+              <SelectItem value="complete">MD + CSV 齐全</SelectItem>
+              <SelectItem value="incomplete">文件不完整</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="flex items-center gap-2">
           <Switch id="matched-only" checked={matchedOnly} onCheckedChange={setMatchedOnly} />
-          <Label htmlFor="matched-only" className="text-[13px]">只看匹配岗位</Label>
+          <Label htmlFor="matched-only" className="text-[13px]">只看高匹配</Label>
         </div>
+        <span className="ml-auto text-[12px] text-ink-tertiary" role="status" aria-live="polite">
+          显示 {filteredReports.length} / {reports?.length ?? 0} 份日报
+        </span>
         <Button
           variant="ghost"
           size="sm"
-          className="ml-auto text-ink-secondary"
-          onClick={() => {
-            setDate(''); setType('all'); setMatchedOnly(false)
-          }}
+          className="text-ink-secondary"
+          disabled={!hasFilters}
+          onClick={clearFilters}
         >
           重置
         </Button>
@@ -112,6 +136,8 @@ export default function ReportsPage() {
               </Button>
             }
           />
+        ) : filteredReports.length === 0 ? (
+          <NoResults onClear={clearFilters} />
         ) : (
           <div className="overflow-x-auto">
             <Table>
@@ -128,7 +154,7 @@ export default function ReportsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {reports.map((r) => (
+                {filteredReports.map((r) => (
                   <TableRow key={r.date}>
                     <TableCell>
                       <button onClick={() => navigate(`/reports/${r.date}`)} className="font-medium text-brand hover:underline tabular-nums">
@@ -154,6 +180,8 @@ export default function ReportsPage() {
                         </Button>
                         <Button
                           variant="ghost" size="icon" className="size-8 text-ink-tertiary" aria-label="下载 Markdown"
+                          disabled={r.markdownStatus !== 'generated'}
+                          title={r.markdownStatus === 'generated' ? '下载 Markdown' : 'Markdown 文件尚未生成'}
                           onClick={async () => {
                             try { await downloadReport(r.date, 'md'); toast.success('Markdown 日报已下载') }
                             catch (error) { toast.error('下载失败', { description: error instanceof Error ? error.message : '文件不存在。' }) }
@@ -163,6 +191,8 @@ export default function ReportsPage() {
                         </Button>
                         <Button
                           variant="ghost" size="icon" className="size-8 text-ink-tertiary" aria-label="下载 CSV"
+                          disabled={r.csvStatus !== 'generated'}
+                          title={r.csvStatus === 'generated' ? '下载 CSV' : 'CSV 文件尚未生成'}
                           onClick={async () => {
                             try { await downloadReport(r.date, 'csv'); toast.success('CSV 日报已下载') }
                             catch (error) { toast.error('下载失败', { description: error instanceof Error ? error.message : '文件不存在。' }) }
@@ -172,14 +202,9 @@ export default function ReportsPage() {
                         </Button>
                         <Button
                           variant="ghost" size="icon" className="size-8 text-ink-tertiary" aria-label="重新发送邮件"
-                          onClick={async () => {
-                            try {
-                              const res = await resendReportEmail(r.date)
-                              if (res.ok) toast.success('邮件已重新发送')
-                            } catch (error) {
-                              toast.error('邮件发送失败', { description: error instanceof Error ? error.message : '请检查 SMTP 配置。' })
-                            }
-                          }}
+                          disabled={r.emailStatus === 'disabled' || sendingDate === r.date}
+                          title={r.emailStatus === 'disabled' ? '请先在设置页启用 SMTP' : '重新发送历史日报邮件'}
+                          onClick={() => setResendDate(r.date)}
                         >
                           <Mail className="size-4" />
                         </Button>
@@ -192,6 +217,30 @@ export default function ReportsPage() {
           </div>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={resendDate !== null}
+        onOpenChange={(open) => !open && setResendDate(null)}
+        title="重新发送历史日报邮件？"
+        description={resendDate ? `将通过当前 SMTP 配置，把 ${resendDate} 日报中符合当前通知筛选条件的岗位发送给已配置收件人。这会产生一次真实外部邮件发送。` : ''}
+        confirmLabel="确认发送邮件"
+        confirmDisabled={sendingDate !== null}
+        onConfirm={async () => {
+          const targetDate = resendDate
+          if (!targetDate) return
+          setSendingDate(targetDate)
+          try {
+            const result = await resendReportEmail(targetDate, true)
+            toast.success(result.message)
+            await refetch()
+          } catch (error) {
+            toast.error('邮件发送失败', { description: error instanceof Error ? error.message : '请检查 SMTP 配置。' })
+          } finally {
+            setSendingDate(null)
+            setResendDate(null)
+          }
+        }}
+      />
     </div>
   )
 }

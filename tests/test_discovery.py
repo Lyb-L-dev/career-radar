@@ -67,7 +67,7 @@ def test_official_recruitment_notice_inside_news_section_is_followed() -> None:
     assert "https://example.gov.cn/news/campus-award" not in follow
 
 
-def test_crawl_url_collapses_blank_and_filter_query_variants() -> None:
+def test_crawl_url_preserves_recruitment_filter_query_variants() -> None:
     first = canonicalize_crawl_url(
         "https://example.com/alljobs?id=&jobType=1&campus=1&utm_source=test"
     )
@@ -76,8 +76,9 @@ def test_crawl_url_collapses_blank_and_filter_query_variants() -> None:
         "https://example.com/job?id=1001&jobType=campus"
     )
 
-    assert first == "https://example.com/alljobs"
-    assert second == first
+    assert first == "https://example.com/alljobs?campus=1&jobType=1"
+    assert second == "https://example.com/alljobs?jobType=9"
+    assert second != first
     assert "id=1001" in detail
 
 
@@ -86,7 +87,18 @@ def test_crawl_url_keeps_required_non_filter_entry_parameter() -> None:
         "https://job.chinatelecom.com.cn/wt/TELE/web/index?brandCode=1&jobType=campus"
     )
 
-    assert url.endswith("?brandCode=1")
+    assert url.endswith("?brandCode=1&jobType=campus")
+
+
+def test_parse_html_keeps_spa_job_route_distinct_from_page_anchor() -> None:
+    document = parse_html(
+        '<a href="#/job/1001">查看职位</a><a href="#jobs">跳转岗位区域</a>',
+        "https://example.com/careers",
+    )
+
+    urls = {item.url for item in document.links}
+    assert "https://example.com/careers#/job/1001" in urls
+    assert "https://example.com/careers" not in urls
 
 
 def test_request_url_preserves_server_directory_trailing_slash() -> None:
@@ -108,6 +120,34 @@ def test_mixed_page_does_not_expand_broad_career_only_navigation() -> None:
 
     assert "https://example.com/jobs/1001" in follow
     assert "https://example.com/intern-life" not in follow
+
+
+def test_recruitment_category_links_are_followed_inside_join_section() -> None:
+    document = parse_html(
+        '<a href="/about/join/yanfa">研发类</a>'
+        '<a href="/about/join/zhineng">职能类</a>'
+        '<a href="/about/product">产品介绍</a>',
+        "https://example.com/about/join",
+    )
+
+    follow = heuristic_follow_links(document, "career_home", 10)
+
+    assert "https://example.com/about/join/yanfa" in follow
+    assert "https://example.com/about/join/zhineng" in follow
+    assert "https://example.com/about/product" not in follow
+
+
+def test_job_detail_with_query_id_is_followed_from_official_job_list() -> None:
+    document = parse_html(
+        '<a href="/zh/job?id=40">Cloud 技术支持工程师</a>'
+        '<a href="/zh/alljobs?jobType=1&id=">开发类筛选</a>',
+        "https://example.com/zh/alljobs",
+    )
+
+    follow = heuristic_follow_links(document, "job_list", 10)
+
+    assert "https://example.com/zh/job?id=40" in follow
+    assert "https://example.com/zh/alljobs?jobType=1&id=" not in follow
 
 
 def test_image_only_year_zp_archive_is_treated_as_job_detail() -> None:
@@ -162,3 +202,22 @@ def test_parse_html_prefers_trafilatura_when_installed() -> None:
     )
     assert "岗位职责" in document.text
     assert len(document.text) >= 100
+
+
+def test_parse_html_preserves_short_recruitment_requirement_in_table() -> None:
+    pytest.importorskip("trafilatura")
+    paragraphs = "".join(
+        f"<p>职责{i}：参与平台服务研发，负责需求分析、方案设计、开发测试与维护。</p>"
+        for i in range(14)
+    )
+    html = (
+        "<html><body><article><h1>2026 招聘公告</h1>"
+        + paragraphs
+        + "<table><tr><th>岗位</th><th>专业要求</th></tr>"
+        + "<tr><td>数据工程师</td><td>统计学硕士</td></tr></table>"
+        + "</article></body></html>"
+    )
+
+    document = parse_html(html, "https://example.com/jobs")
+
+    assert "统计学硕士" in document.text

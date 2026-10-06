@@ -1,12 +1,90 @@
-# Career Radar：企业官网招聘信息自动监控与完整 JD 提取
+# Career Radar：岗位雷达与能力证据成长工作台
 
-> [岗位页面](http://127.0.0.1:8000/jobs)统一展示官网与 BOSS 线索，并标明来源。BOSS 支持按简历多方向抓取和小米 MiMo 筛选，使用说明见 [BOSS_OPPORTUNITIES.md](BOSS_OPPORTUNITIES.md)。
+Career Radar 是面向校招、AI 应用与 Agent 开发求职的本地工作台。它把企业招聘页与 BOSS 平台线索分别呈现，从完整 JD 中提取岗位要求，再对照你的能力证据，安排每天一个学习任务和一个项目任务。
 
-Career Radar 面向校招求职者：每天访问你配置的企业公开官网，智能寻找招聘入口和职位详情页，用 LLM 提取完整 JD，利用 SQLite 去重/检测变化，并输出 Markdown、CSV 和可选邮件提醒。项目同时提供本地 FastAPI 与 React 管理端，可直接查看真实画像、岗位、企业、运行、日报和通知数据。
+打开首页，先看值得阅读和核对的岗位；进入成长计划，回答“我已经能证明什么、目标岗位还缺什么、今天补哪一块”。进展来自独立回答、跨日复测和项目材料，而不是学习时长或一个无法解释的匹配百分比。
+
+项目沿用 **FastAPI + React 19 + TypeScript + SQLite**，默认使用 MiMo，支持其他已配置的模型网关。岗位、画像、答题、证据与任务保存在本地；模型操作后台执行，支持状态查询、失败重试和刷新恢复。
+
+```mermaid
+flowchart LR
+    JD[目标 JD] --> REQ[带原文引用的岗位要求]
+    REQ --> GAP[对照能力证据与差距]
+    GAP --> TASK[今日学习与项目任务]
+    TASK --> RECALL[主动回忆与教学]
+    RECALL --> REVIEW[跨日变式复测]
+    REVIEW --> PROJECT[项目审阅与实现追问]
+    PROJECT --> EVIDENCE[更新证据与能力地图]
+    EVIDENCE --> GAP
+```
+
+| 模块 | 能完成什么 |
+|---|---|
+| 岗位雷达 | 官网监控、完整 JD 提取、去重与变更记录；BOSS 线索独立采集或导入 |
+| 岗位对照 | 分别核对学历、届别、年限、画像匹配与成长技术证据，保留原文依据 |
+| 能力地图 | 展示目标技能、必要基础、等级标准、证据出处和复习安排 |
+| 今日行动 | 每天一个学习任务、一个 Career Radar 项目任务，根据反馈调整未完成任务 |
+| 回忆与项目 | 先答再教，提示后练习单独记录；支持项目材料审阅与针对材料的追问 |
+| 申请材料 | 生成、审阅和修订材料，保留人工批准与真实简历事实边界 |
+
+### 界面预览
+
+以下截图使用离线合成 JD、假模型与临时数据库，展示界面和交互；其中的能力等级不是用户真实记录。
+
+![岗位优先的首页，官网与 BOSS 来源分开展示](docs/images/overview.png)
+
+![能力路线图与可追溯的 HTTP 证据详情](docs/images/growth-map.png)
+
+首页按“岗位概况 → 双来源机会 → 今日成长 → 待处理 → 监控简报”组织。岗位筛选保留在 URL，详情可返回原列表；成长页保留桌面路线图与手机分组列表。项目材料、答案和任务反馈支持本地草稿，长模型分析与历史证据按需展开。
+
+### 快速开始
+
+```powershell
+git clone https://github.com/Lyb-L-dev/career-radar.git
+cd career-radar
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m playwright install chromium
+Copy-Item .env.example .env
+Copy-Item config.example.yaml config.yaml
+cd web
+npm ci
+npm run build
+cd ..
+.\.venv\Scripts\python.exe -m career_radar serve -c config.yaml
+```
+
+运行前在本地 `.env` 填写模型密钥，并在 `config.yaml` 设置真实画像与来源。打开 [首页](http://127.0.0.1:8000/) 或 [成长计划](http://127.0.0.1:8000/growth)。首次使用成长模块：选择 JD → 分析要求 → 开始短测 → 查看证据与今日行动。完整配置说明见下文。
+
+**能力与数据边界：**未知能力显示“待验证”；提示后回答不计为独立掌握；项目运行记录属于用户提交，系统不执行代码。技术证据不代表满足所有报名条件，也不代表录用概率。真实配置、简历、数据库、登录态和运行结果不应提交到公开仓库。
+
+### 验证与研究
+
+前端包含 URL 恢复、中文输入、草稿恢复和候选选择回归；离线浏览器脚本覆盖岗位到成长流程、评分失败重试、四种屏宽、键盘与 axe 检查。所有这些 UI 检查使用临时数据和假模型。
+
+- [前端优化来源、实施验证与性能取舍](research/frontend-optimization-2026-10-05.md)
+- [真实 MiMo 小样本评测及局限](research/growth-live-evaluation.md)
+- [HTTP 教学内容的一手事实核对](research/growth-http-facts.md)
+
+运行前端检查：在 `web/` 执行 `npm run test`、`npm run lint`、`npm run build`。后端执行 `python -m pytest -q` 和 `python -m ruff check --no-cache src tests scripts`。完整离线 UI 验证：`python scripts/verify_frontend_ui.py --output <截图目录>`。
 
 它只访问无需登录的公开 HTTP(S) 页面；每个站点都会检查 `robots.txt`，同一域名默认间隔 5～10 秒。单个页面或单家公司失败不会中断整批任务。
 
 ## 已实现能力
+
+- **成长计划**：选择官网/BOSS 目标岗位或粘贴 JD，分析带原文引用的能力要求，查看前置技能路线图和岗位差距。通过主动回忆、教学、跨日变式复测、项目材料审阅和实现追问留下证据；等级与复习安排由后端按明确规则计算。每天生成一个学习任务和一个 Career Radar 项目任务，反馈影响次日安排。
+
+### 使用成长闭环
+
+启动本地服务后打开 [成长计划](http://127.0.0.1:8000/growth)。先在“目标岗位”选择完整 JD，标记最多 3 条重点岗位，再点击“分析岗位要求”。模型操作在后台执行，页面显示进度与重试入口；当前配置的 MiMo 或 DeepSeek 结构化调用网关可直接复用。
+
+“能力路线图”默认展示目标技能及必要基础，点击节点查看独立回答、提示后练习、项目代码和评分依据。“初次能力短测”覆盖当前优先级最高的 3 项技能；也可单独选择一个技能开始回忆。看过讲解后的练习与独立回忆分别记录，次日通过变式题再验证。复习间隔为 1、3、7、14、30 天。
+
+“今日行动”每天保留一个学习任务和一个项目任务。默认预算 120 分钟，可在“复盘与设置”调整；完成反馈不会直接提升能力等级。项目运行记录按用户提交保存，第一版只做模型审阅，不执行代码。学历、届别、工作年限与技术证据分别展示，匹配结果不代表录用概率。
+
+成长数据使用同一个 SQLite 数据库中的独立表，启动时有序升级到 schema 12，保留既有岗位和画像。更新代码后重新构建 `web/` 并重启本地服务。离线回归使用 `tests/test_growth.py`；桌面与窄屏端到端验证脚本为 `scripts/verify_growth_ui.py --output <截图目录>`，使用临时数据库和假模型，不访问外部网站。
+
+### 招聘监控与申请能力
 
 - YAML 自定义企业列表；输入招聘专栏或官网首页均可。
 - 支持央企、地方国企、民营、外资、合资等公司类型分类，并可在管理端按类型筛选或批量扫描。
@@ -18,12 +96,13 @@ Career Radar 面向校招求职者：每天访问你配置的企业公开官网�
 - 官网首页智能发现“招聘、校招、加入我们、Careers、Jobs”等入口。
 - `requests + BeautifulSoup` 静态抓取；可配置 Playwright 自动回退/始终渲染/完全禁用。
 - 正文提取优先使用 `trafilatura` 去除导航/页脚样板（内容损失过大时自动回退），降低 LLM 输入体积与成本。
+- 官网页面中的招聘表格会保留在正文中；EMQ 和美图的已核验招聘页可直接提取岗位/完整 JD，ZStack 的公开招聘系统可通过 JSON Feed POST 提取职责与要求。直接提取的岗位标为“待评估”，不把缺失的模型判断伪装成高匹配。
 - 岗位详情页提供“相似岗位”：基于本地特征哈希向量（零依赖、离线）计算语义相似度，
   便于横向比较同类 JD 与发现同一岗位的重复发布。
 - 同义岗位自动合并：同一公司“换标题重发”的岗位（例如“后端开发工程师”与
   “Java后端开发工程师”、JD 相同）在配置窗口期内自动合并为一个实体，不重复通知；
   不同岗位（即使共享公司福利样板文本）不会被误合并。
-- 小米 MiMo JSON Output（默认）、可选 DeepSeek、OpenAI Responses API Pydantic 结构化输出，以及 Anthropic 官方 SDK 适配。
+- 小米 MiMo-V2.6-Pro JSON Output（默认）、可选 DeepSeek、OpenAI Responses API 与 Anthropic SDK 适配。
 - 可选 `provider: litellm` 统一接入 100+ 模型供应商（含 Ollama 本地模型），需要执行 `pip install -e ".[llm-gateway]"`。
 - 列表页自动跟踪职位详情、岗位列表和分页链接；详情页不自动进入登录或申请表。
 - 提取职位名称、地点、JD 全文、任职资格、招聘类型、2026 届标识、目标届别、发布时间、有效期和申请链接。
@@ -36,14 +115,14 @@ Career Radar 面向校招求职者：每天访问你配置的企业公开官网�
 - 日志按大小滚动，API Key 和 SMTP 密码只从环境变量读取。
 - FastAPI 默认只监听 `127.0.0.1`，提供真实扫描任务、配置安全写回和 Web 静态资源托管；密钥接口只返回“是否已配置”。
 - React 管理端默认调用真实 `/api`，只有显式设置 `VITE_USE_MOCK=true` 才进入演示模式。
-- 首页提供“今日工作台”，汇总待处理岗位更新、收藏未投递岗位、待人工批准材料和监控异常；首次运行时显示三步引导。
+- 首页优先显示分来源的岗位机会，再衔接今日成长任务；“待处理事项”汇总岗位更新、收藏未投递、待人工批准材料和监控异常。
 - 岗位筛选条件同步到浏览器地址，可复制链接或刷新后继续；常用筛选可保存在本机浏览器。当前结果和勾选岗位可直接导出安全 CSV。
 - “忽略本次更新”只忽略当前 JD 内容版本；企业再次修改岗位后会自动恢复为待处理更新。
 - 首次配置支持企业 CSV 预览导入：逐行校验、自动去重，有无效行时整批不写入；预览过程不访问企业网站。
 - 管理端按路由加载页面，并将主要第三方依赖拆包，减少首次打开时需要加载的脚本。
-- JD 完整的具体岗位可在网页发起 AI 申请任务：DeepSeek 先做五维匹配和硬性资格评估，人工批准后再生成简历/求职信、完成事实与招聘视角双审，并提供经过路径和哈希校验的本地文件下载。
-- 岗位详情页可手动发起“小红书、知乎、微博、牛客”公开口碑调查：由本机 Agent Reach/OpenCLI 只读搜索，DeepSeek 生成带证据编号的风险归纳，原始线索与报告持久化到 SQLite。
-- 候选企业可登记并人工核验招聘公众号，再由 OpenCLI 搜索和下载公开文章。账号身份、招聘语义和集团子公司归属均由本地规则校验；官方文章导入招聘通知，转载或未核验账号只保存为线索，整个公众号扫描不调用 DeepSeek。
+- JD 完整的具体岗位可在网页发起 AI 申请任务：当前配置的 MiMo 先做五维匹配和硬性资格评估，人工批准后再生成简历/求职信、完成事实与招聘视角双审，并提供经过路径和哈希校验的本地文件下载。
+- 岗位详情页可手动发起“小红书、知乎、微博、牛客”公开口碑调查：由本机 Agent Reach/OpenCLI 只读搜索，当前配置的 LLM 生成带证据编号的风险归纳，原始线索与报告持久化到 SQLite。
+- 候选企业可登记并人工核验招聘公众号，再由 OpenCLI 搜索和下载公开文章。账号身份、招聘语义和集团子公司归属均由本地规则校验；官方文章导入招聘通知，转载或未核验账号只保存为线索，整个公众号扫描不调用 LLM。
 
 ## 目录结构
 
@@ -62,25 +141,31 @@ career-radar/
 │  └─ run_linux.sh            # Linux cron 入口
 ├─ src/career_radar/
 │  ├─ cli.py                  # 命令行
-│  ├─ api.py                  # 本地 FastAPI、静态前端托管与接口校验
+│  ├─ api.py                  # FastAPI 应用装配与静态前端托管
+│  ├─ api_profile.py          # 公开画像转换、验证与原子写回
+│  ├─ api_settings.py         # 脱敏设置、连通性测试与维护操作
+│  ├─ api_overview.py         # 健康状态、今日概览与跨资源搜索
 │  ├─ api_companies.py        # 企业 CRUD、批量操作、连接测试与审计接口
 │  ├─ api_candidates.py       # 候选企业筛选、审批、官网发现与转监控接口
 │  ├─ api_wechat.py           # 公众号绑定、公开文章扫描与摘要接口
-│  ├─ web_repository.py       # SQLite 到前端字段的真实数据适配
+│  ├─ web_repository/         # 按岗位、企业、日报等领域组合的 Web 数据适配
 │  ├─ run_manager.py          # 单进程串行真实扫描任务
 │  ├─ reputation.py           # OpenCLI 只读社交搜索、证据清洗与口碑后台任务
 │  ├─ wechat_recruitment.py   # 公众号搜索、正文读取、身份核验与通知导入
+│  ├─ maintenance.py          # 本地私有备份与安全的数据维护操作
 │  ├─ config_editor.py        # YAML 局部校验、备份和原子写回
 │  ├─ config.py               # YAML/.env 加载与严格校验
 │  ├─ company_catalog.py      # 千家候选库筛选、画像初筛与审批状态合并
 │  ├─ crawler.py              # robots、限速、HTTP、Playwright
 │  ├─ discovery.py            # HTML 清洗和招聘链接发现
-│  ├─ llm.py                  # DeepSeek/OpenAI/Anthropic、切片与合并
+│  ├─ official_sources.py     # 已验证官网页面的无模型岗位提取
+│  ├─ llm.py                  # MiMo/DeepSeek/OpenAI/Anthropic、切片与合并
 │  ├─ prompts.py              # 完整 JD、能力匹配与难度评分提示词
-│  ├─ application/            # DeepSeek 申请评估、正文生成、双审、修订和断点恢复
+│  ├─ application/            # MiMo 申请评估、正文生成、双审、修订和断点恢复
 │  ├─ storage.py              # SQLite 去重与变化历史
 │  ├─ output.py               # Markdown/CSV 日报
 │  ├─ mailer.py               # SMTP 通知
+│  ├─ report_delivery.py      # 历史事件恢复、统一通知筛选与日报投递
 │  └─ pipeline.py             # 跨公司运行流程
 ├─ web/                        # React/TypeScript 管理端源码（与后端同仓库）
 ├─ tests/                     # 离线单元测试与 API 契约测试
@@ -125,7 +210,7 @@ Chromium；Python 包本身仍会安装，只有实际启用渲染时才启动�
 XIAOMIMIMO_API_KEY=你的真实小米MiMo密钥
 ```
 
-若以后切换供应商，再填写 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不要把 `.env` 上传到 GitHub；项目已经在 `.gitignore` 中忽略它。
+若以后切换供应商，再填写对应的 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不要把 `.env` 上传到 GitHub；项目已经在 `.gitignore` 中忽略它。
 
 ## 二、本地 Web 管理端
 
@@ -150,13 +235,13 @@ cd E:\AIProjects\work\career-radar
 
 浏览器打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。接口文档位于 [http://127.0.0.1:8000/api/docs](http://127.0.0.1:8000/api/docs)。也可以执行：
 
-同一个服务提供官网岗位和 BOSS 线索，无需第二个 Career Radar 启动命令。在岗位页选择 BOSS 来源，点击“获取岗位”可抓取、导入 JSON 或调整求职身份。页面默认隐藏已排除岗位，来源日期的解释可悬停查看。
+同一个服务同时提供官网岗位和 BOSS 机会。[岗位页面](http://127.0.0.1:8000/jobs) 默认合并显示两个来源，每条岗位都标明出处；按来源切换可查看各自的详细筛选和操作。BOSS 抓取结果的导入和 AI 筛选说明见 [BOSS_OPPORTUNITIES.md](BOSS_OPPORTUNITIES.md)。修改前端代码后要先在 `web/` 运行一次 `npm run build`，再重启上述服务，旧进程不会自动加载新路由或页面。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\AIProjects\work\career-radar\scripts\run_web_windows.ps1"
 ```
 
-开发前端时使用两个 PowerShell 窗口：后端运行上面的 `serve` 命令；`web/` 目录运行 `npm run dev`，再访问 `http://127.0.0.1:7100`。Vite 会把 `/api` 代理到 8000 端口。FastAPI 优先托管 `web/dist`；仅为兼容旧本地目录，找不到时才回退到同级 `career-radar-web/dist`。
+仅开发前端代码、需要热更新时才使用两个 PowerShell 窗口：后端运行上面的 `serve` 命令；`web/` 目录运行 `npm run dev`，再访问 `http://127.0.0.1:7100`。日常使用只需 8000 端口。Vite 会把 `/api` 代理到 8000 端口。FastAPI 优先托管 `web/dist`；仅为兼容旧本地目录，找不到时才回退到同级 `career-radar-web/dist`。
 
 首次配置页的“导入企业 CSV”会先显示预览，确认后才原子写入 `config.yaml`。
 支持 UTF-8 CSV 和中英文列名；最小模板如下：
@@ -168,13 +253,45 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\AIProjects\work\care
 
 “官网地址”和“招聘入口”至少填写一项。重复企业会跳过；只要存在无效网址、
 未知枚举或其他无效行，本批次就不会写入。该预览只做本地格式与安全校验，
-不会发起企业网站请求，也不会调用 DeepSeek。
+不会发起企业网站请求，也不会调用 LLM。
 
-安全说明：`serve` 会拒绝绑定公网地址，表单也会拒绝 `localhost`、私网和保留 IP，避免把本地管理端变成内网请求代理。Web 不返回 DeepSeek/SMTP 密钥；密钥仍只从 `.env` 或系统环境变量读取。健康检查不返回配置文件或数据库绝对路径，设置页也只展示和接受项目目录内的相对数据路径。若以后部署到服务器并允许远程访问，必须另外配置反向代理认证和 HTTPS。
+安全说明：`serve` 会拒绝绑定公网地址，表单也会拒绝 `localhost`、私网和保留 IP，避免把本地管理端变成内网请求代理。Web 不返回 MiMo/SMTP 密钥；密钥仍只从 `.env` 或系统环境变量读取。健康检查不返回配置文件或数据库绝对路径，设置页也只展示和接受项目目录内的相对数据路径。若以后部署到服务器并允许远程访问，必须另外配置反向代理认证和 HTTPS。
+
+### 本地备份与数据维护
+
+设置页“数据与维护 → 创建本地完整备份”会先要求确认，然后在项目的
+`private/backups/` 中原子创建 ZIP。备份包含 `config.yaml`、一致性 SQLite
+快照、日报、日志、企业候选库、已确认的申请画像和申请材料；明确排除
+`.env`、系统环境变量和已有备份。接口只返回备份文件名、文件数量和大小，
+不提供下载接口，也不会返回绝对路径或任何备份内容。
+
+同一页面会列出备份名称、创建时间、大小和文件数量，可手动执行 ZIP、逐文件
+SHA-256 与 SQLite `integrity_check` 校验，也可在二次确认后删除指定备份。
+`app.backup_retention_count` 控制自动保留数量（默认 10 份）；创建新备份成功后，
+只会清理超出数量的最旧备份。旧版本备份没有逐文件 SHA-256 时仍会完成 ZIP 与
+SQLite 校验。
+
+备份包本身包含私有信息和运行数据，应只保存在受保护的本地磁盘，并按需另行
+加密。`private/` 已被 Git 忽略。恢复时先停止 Career Radar，再手工核对并恢复
+所需文件；API 密钥仍需从单独保管的 `.env` 或系统环境变量恢复。
+
+每次非预览扫描写出日报后，系统都会按“日报保留天数”自动清理过期文件；清理
+失败只会记录到本次任务异常，不会让已经完成的企业扫描和岗位入库失效。设置页
+“清理历史日报”可随时手动执行同一套规则：只删除输出目录中名称严格匹配
+`YYYY-MM-DD-jobs.md` 或 `YYYY-MM-DD-jobs.csv`、且早于配置保留期的文件；
+其他文件、无效日期文件和未来日期文件不会被处理。手动操作会在确认后执行，
+建议先创建本地完整备份。
+
+日报中心支持重新发送历史日报邮件。点击邮件按钮后必须二次确认，系统会从本地
+SQLite 的 `job_history` 恢复该日期当时的完整岗位版本，并按当前届别匹配、能力
+匹配和投递难度通知条件筛选后发送。发送成功后只记录日报日期、岗位数量和发送
+时间；SMTP 密码仍只从环境变量读取。SMTP 未启用时按钮不可用，开发测试不会
+连接真实邮件服务器。日报列表可按日期、文件是否齐全和是否包含高匹配岗位组合
+筛选；筛选无结果时可一键恢复全部日报，未生成的文件不会显示可用下载操作。
 
 ### 岗位口碑调查（Agent Reach/OpenCLI）
 
-这个功能不是每天批量扫描所有岗位，而是由你在“岗位详情 → 岗位口碑调查”中手动触发。系统会串行查询小红书、知乎、微博和牛客，每个平台读取少量公开搜索结果和有限详情。平台可能模糊召回只包含岗位名的通用内容，因此后端会再次校验标题/正文：没有明确命中目标公司全称或可复核品牌简称的结果一律丢弃；保留结果再分为“公司+岗位相关”和“仅公司相关”。最后由当前配置的 DeepSeek 归纳工作强度、单双休、福利、管理、成长、岗位边界和面试体验。结论会显示原始证据链接和置信度；没有结果、连接中断或单个平台失败时会如实显示，不会伪造评价。
+这个功能不是每天批量扫描所有岗位，而是由你在“岗位详情 → 岗位口碑调查”中手动触发。系统会串行查询小红书、知乎、微博和牛客，每个平台读取少量公开搜索结果和有限详情。平台可能模糊召回只包含岗位名的通用内容，因此后端会再次校验标题/正文：没有明确命中目标公司全称或可复核品牌简称的结果一律丢弃；保留结果再分为“公司+岗位相关”和“仅公司相关”。最后由当前配置的 LLM 归纳工作强度、单双休、福利、管理、成长、岗位边界和面试体验。结论会显示原始证据链接和置信度；没有结果、连接中断或单个平台失败时会如实显示，不会伪造评价。
 
 你这台 Windows 电脑的示例配置已经指向 Agent Reach 安装目录：
 
@@ -204,7 +321,7 @@ reputation:
 
 在“优质企业候选库”中点击企业卡片的“公众号招聘”即可使用。先登记公众号名称；如果能从公众号主页或公开文章确认微信号、文章链接中的 `__biz`，建议一并填写。只有人工确认主体后才能选择“已人工核验”。集团统一招聘公众号还必须填写母集团和目标子公司的归属关键词，正文未命中归属词时不会作为该子公司的官方招聘导入。
 
-扫描会调用 OpenCLI 的 `weixin search` 和 `weixin download`，只读取公开文章，不登录微信、不保存账号密码、不发布内容，也不调用 DeepSeek。系统按文章 URL 去重并检测正文变化：
+扫描会调用 OpenCLI 的 `weixin search` 和 `weixin download`，只读取公开文章，不登录微信、不保存账号密码、不发布内容，也不调用 LLM。系统按文章 URL 去重并检测正文变化：
 
 - 已核验账号、招聘正文和归属范围全部命中：保存为官方公众号来源，并导入“招聘通知”。
 - 未核验账号、转载账号或集团归属不明确：只保存为第三方待核验线索，不导入岗位事实。
@@ -245,6 +362,7 @@ companies:
       - https://government.example/official-list
     enabled: true
     discover_from_homepage: false
+    discover_from_sitemap: true
     max_pages: 20
     recruitment_channel: official_careers
 
@@ -298,6 +416,60 @@ companies:
         published_at: postDate
 ```
 
+部分官方招聘系统使用只读 POST 接口，且把岗位职责、任职要求分成两个字段。可在同一适配器中配置请求体与字段映射：
+
+```yaml
+    ats_source:
+      enabled: true
+      type: json_feed
+      json_url: https://careers.example.com/api/jobs
+      json_method: post
+      json_body:
+        Category: ['2']
+        PageIndex: 0
+        PageSize: 100
+      json_items_path: Data
+      json_success_path: Code
+      json_success_value: 200
+      json_mapping:
+        title: JobAdName
+        description: Duty
+        requirements: Require
+        location: LocNames
+      evaluate_with_llm: false
+```
+
+POST 请求不会向重定向地址重放；运行时先检查目标的 `robots.txt`。接口未给出有效发布时间时保留为空，不会把占位年份当成招聘日期。
+
+只读 POST 列表有分页时，应显式配置请求体中的页码字段和响应总数路径，避免只采集第一页：
+
+```yaml
+      json_body: {PageIndex: 0, PageSize: 50}
+      json_page_field: PageIndex
+      json_total_path: Count
+      json_max_pages: 10
+      # 仅在已核对官网明确给出的投递入口时填写；接口自己的 apply_url 优先。
+      fallback_apply_url: https://careers.example.com/jobs
+```
+
+每一页请求都执行 robots、限速和取消检查。分页总数变化、重复页、重复岗位 ID、
+提前空页或未收齐记录便达到页数上限会明确失败，不把截断列表当成完整结果。
+官方接口有岗位 ID 时，系统保留带来源命名空间的 ID；不同 ID 的岗位不会因正文相似
+而自动合并，同一 ID 更改标题仍作为原岗位更新。旧无 ID 记录可在再次扫描时升级并
+保留原有收藏和申请主键；LLM 返回的猜测 ID 不参与这个身份判断。
+
+[公开来源预设](data/official_source_presets.yaml)包含已于 2026-10-04 实测的 Dify 和
+合合信息。预设不会自动加载，需核对后将公司条目加入本机配置；当前本机已接入并
+入库 71 条独立岗位。来源的届别、在读限制及实际验收见
+[官网覆盖报告](research/official-coverage-2026-10-04.md)。`evaluate_with_llm: false`
+只采集原始官网事实，能力匹配保持“待评估”，不会自动标记为适合投递。
+
+动态招聘页如果导航文字先出现、岗位列表后出现，可在该公司配置中给起始招聘页设置 `entry_wait_selector`。页面等待所选元素可见后才做内容提取；等待失败会明确报错，避免把空壳页面当成“暂无岗位”。
+
+```yaml
+    entry_wait_selector: '.job-card'
+```
+
 说明：
 
 - ATS 岗位同样走 SQLite 去重、变化检测、日报和通知链路；`evaluate_with_llm`
@@ -320,6 +492,15 @@ companies:
 - `true`：无论 URL 路径如何都允许智能寻找招聘入口。
 - `false`：把 URL 当成明确招聘页；LLM 仍可跟踪页面明确给出的职位详情/列表链接。
 
+`discover_from_sitemap` 用于补充发现没有出现在首页链接中的官网招聘公告。
+`auto`（默认）只在官网首页发现或 `notices`/`both` 公告监控时启用；明确的招聘
+详情页可手动设为 `true`，不希望额外请求则设为 `false`。程序优先复用官方
+`robots.txt` 声明的站点地图，否则尝试同域 `/sitemap.xml`；最多读取 3 份 XML，
+只把同域、URL 路径带招聘语义的前 20 个页面交给原有扫描。每个页面仍须经过
+robots 检查、限速、正文提取与岗位真实性判断；站点地图 URL 本身不会直接入库为
+岗位。没有招聘语义路径、未列入地图或只有动态接口的站点仍需用官网入口、ATS
+公开接口或人工核验补充。
+
 `recruitment_channel` 用于说明当前 URL 的来源边界，可选 `official_careers`（官方招聘页）、
 `official_homepage`（企业官网首页）、`official_notice_source`（政府/国资或企业官方公告）
 和 `group_recruitment`（母集团统一招聘）。集团平台必须同时填写 `parent_company` 与
@@ -333,7 +514,7 @@ companies:
 llm:
   provider: mimo
   model: mimo-v2.6-pro
-  base_url: https://api.xiaomimimo.com/v1 # Token Plan Key 使用 https://token-plan-cn.xiaomimimo.com/v1
+  base_url: https://api.xiaomimimo.com/v1 # 按量付费 sk- Key；Token Plan tp-/ttp- Key 请改为 https://token-plan-cn.xiaomimimo.com/v1
   request_timeout_seconds: 120
   max_output_tokens: 30000
   max_input_chars: 140000
@@ -341,11 +522,11 @@ llm:
   max_retries: 3
 ```
 
-小米 MiMo 提供 OpenAI 兼容的 Chat Completions API。本工具使用 JSON Object 模式输出，再用 Pydantic 本地校验。模型与接口地址以账号套餐为准；按量 Key 使用上面的接口，Token Plan Key 使用 `https://token-plan-cn.xiaomimimo.com/v1`：
+小米 MiMo 官方提供 OpenAI 兼容的 Chat Completions API。Career Radar 使用 `mimo-v2.6-pro` 的 JSON Object 模式输出，再用 Pydantic 做本地严格校验；需要在 `.env` 中设置 `XIAOMIMIMO_API_KEY`。按量付费 `sk-` Key 用 `https://api.xiaomimimo.com/v1`，Token Plan 的 `tp-`/`ttp-` Key 用 `https://token-plan-cn.xiaomimimo.com/v1`。模型可用性以你的 MiMo 账号为准：
 
-- [MiMo 首次调用 API](https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call)
-- [MiMo 结构化输出](https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/structured-output)
-- [MiMo 模型列表](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)
+- [小米 MiMo 首次调用 API](https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call)
+- [小米 MiMo 结构化输出](https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/text-generation/structured-output)
+- [小米 MiMo 模型列表](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)
 
 切换 OpenAI：
 
@@ -395,7 +576,7 @@ candidate:
   notes: 英语四级，能接受中小型技术团队
 ```
 
-这部分会随网页正文发送给 DeepSeek。不要填写姓名、电话、身份证号、学校学号或精确住址。资料空缺时，能力匹配会标记为 `unknown`，难度评分也会更保守。
+这部分会随网页正文发送给当前配置的 LLM。不要填写姓名、电话、身份证号、学校学号或精确住址。资料空缺时，能力匹配会标记为 `unknown`，难度评分也会更保守。
 
 ### 私有申请画像、AI 双审与本地文档生成
 
@@ -415,7 +596,7 @@ Copy-Item application_profile.example.yaml private\application_profile.yaml
 
 确认所有事实以后，把私有画像中的 `verification_status` 从 `needs_review` 改为
 `confirmed`。未确认画像不能创建任务。创建任务会冻结当时的完整 JD 和私有画像，
-再调用一次 DeepSeek 完成岗位评估，最后停在人工批准节点：
+再调用当前配置的 LLM 完成岗位评估，最后停在人工批准节点：
 
 ```powershell
 .\.venv\Scripts\python.exe -m career_radar apply -c config.yaml --job-id 岗位ID
@@ -437,7 +618,7 @@ Copy-Item application_profile.example.yaml private\application_profile.yaml
 .\.venv\Scripts\python.exe -m career_radar apply -c config.yaml --resume 申请任务ID
 ```
 
-已经完成的步骤会直接复用，不会重复调用 DeepSeek。若只想冻结任务、不立即评估：
+已经完成的步骤会直接复用，不会重复调用 LLM。若只想冻结任务、不立即评估：
 
 ```powershell
 .\.venv\Scripts\python.exe -m career_radar apply -c config.yaml --job-id 岗位ID --prepare-only
@@ -450,18 +631,18 @@ Copy-Item application_profile.example.yaml private\application_profile.yaml
 .\.venv\Scripts\python.exe -m career_radar apply -c config.yaml --render 申请任务ID
 ```
 
-安全边界：发送给 DeepSeek 的画像不含姓名、电话、邮箱、个人主页、来源文件路径和自由
+安全边界：发送给当前 LLM 的画像不含姓名、电话、邮箱、个人主页、来源文件路径和自由
 备注；联系方式只在本机 DOCX 渲染时确定性注入。JD 被当作不可信数据，Prompt 会拒绝
 执行其中的指令。生成器还会清理 Word 作者、自定义属性和修订会话元数据，并核对终稿
 是否完整写入文档。成功状态为 `ready`，文件位于
 `private/application_outputs/<申请任务ID>/`；CLI 只返回文件名和哈希，不公开绝对路径。
-当前版本不会自动投递。
+当前版本不会自动提交官网申请。
 
 网页操作不需要复制岗位 ID：启动 FastAPI 并打开管理端后，进入“岗位中心 → 岗位详情”，
 点击“AI 定制申请材料”。招聘通知或已标记为 `JD 不完整` 的记录会禁用该按钮，避免根据
 摘要生成失真的材料。任务页会自动轮询真实进度：
 
-1. `evaluating`：DeepSeek 正在评估岗位与私有画像。
+1. `evaluating`：当前 LLM 正在评估岗位与私有画像。
 2. `waiting_for_approval`：查看五维评分、硬性资格和逐项 JD 覆盖后，决定是否批准。
 3. `drafting` 到 `verifying`：后台串行生成、双审、修订、渲染和校验；请勿重复点击。
 4. `ready`：下载 DOCX/PDF，人工逐页确认后再到企业官网投递。
@@ -470,6 +651,22 @@ Copy-Item application_profile.example.yaml private\application_profile.yaml
 左侧“AI 申请材料”会保存所有任务。API 与网页只返回岗位摘要、评估、任务状态、文件名、
 SHA-256 和受控下载地址，不返回联系方式、私有画像正文、来源文件路径或生成文件绝对路径。
 下载时后端还会验证文件位于 `application.output_dir` 内且哈希未变化。
+
+#### 官网表单辅助填写（FormPilot）
+
+在申请任务完成到 `ready` 后，任务页可主动下载 `career-radar-formpilot.json`。
+文件从该任务冻结的、已确认私有画像生成，包含姓名、电话、邮箱等真实个人信息；
+普通任务列表和详情 API 仍只返回脱敏摘要。下载接口只接受本地管理端发起的
+`POST`，并设置 `Cache-Control: no-store`。请妥善保管下载文件。
+
+1. 安装 [FormPilot](https://github.com/rockbenben/form-pilot) 浏览器扩展；在扩展中选择“导入 JSON”，选上一步下载的文件。首次只需导入一次。
+2. 在 Career Radar 的岗位详情中核对官网入口，打开企业官网或其官方招聘系统。确认想投递该岗位后，在官网表单上点击 FormPilot 的“填充当前页”。
+3. 按扩展的字段状态核对自动填写的值。未识别、缺失或敏感问题由你填写；需要以后复用的答案，在扩展中点击“记住本页”。多页表单每页分别核对，上传本任务生成的简历文件，最后由你确认并提交。
+
+FormPilot 将导入的资料和记住的答案保存在浏览器本地。私有申请画像修改后，
+需要重新导出、导入，并在扩展中清理旧资料，避免多个版本混用。当前桥接采用
+FormPilot 1.2.1 的 JSON 导入格式；并未自动同步两边数据。扩展填表能力取决于
+具体站点的表单实现，登录、验证码、文件上传、复杂自定义控件及最终提交需要人工处理。
 
 更新本阶段代码后需要安装新增的 Word/PDF 依赖：
 
@@ -492,7 +689,7 @@ application:
 Windows 如需自动 PDF，可安装 LibreOffice，并确保 `soffice.exe` 在 `PATH` 中；程序也会
 自动检查标准安装目录。没有 LibreOffice 时可以在 Word/WPS 中手动“另存为 PDF”。
 
-一次完整流程通常使用 5 次 DeepSeek 调用（评估、简历、事实审查、招聘官/ATS 审查、
+一次完整流程通常使用 5 次 LLM 调用（评估、简历、事实审查、招聘官/ATS 审查、
 修订）；当 `cover_letter_mode: always`，或 `auto` 检测到 JD 明确要求求职信时，再增加
 1 次求职信调用。`never` 永不生成求职信。
 
@@ -706,6 +903,18 @@ npm run lint
 
 测试完全离线，不会调用真实官网、LLM 或邮箱。
 
+打包形态的浏览器冒烟测试会把前端构建到系统临时目录，启动使用临时配置和
+SQLite 的 FastAPI，再验证设置页、LLM 付费确认边界、本地备份创建/校验/删除
+与真实日报列表：
+
+```powershell
+cd E:\AIProjects\work\career-radar
+.\.venv\Scripts\python.exe scripts\run_web_e2e.py
+```
+
+该测试不会读取项目的 `config.yaml`、`.env` 或私有资料，不会调用 LLM、
+SMTP、企业官网或其他外部地址；CI 也会执行同一脚本。
+
 ## 提示词回归评测（可选）
 
 JD 提取和匹配质量依赖提示词与模型。改提示词或换模型前，可以先跑内置评测集，
@@ -857,12 +1066,12 @@ apprise:
   IPv4/IPv6 地址，并在 `robots.txt`、页面重定向和 Playwright 请求发生时重新校验。
 - Playwright 会同时校验顶层页面和 HTTP(S) 子资源，阻止公开页面借浏览器访问本机服务。
 - 官网扫描、口碑调查、微信公众号和申请材料共享统一资源协调器。OpenCLI、浏览器、
-  DeepSeek 和文档渲染按资源排队，避免重复点击造成竞争或同时消耗模型额度。
+  LLM 和文档渲染按资源排队，避免重复点击造成竞争或同时消耗模型额度。
 - FastAPI 关闭时先停止接收新任务，再协作停止扫描并关闭后台执行器；旧任务的现有
   SQLite 恢复逻辑仍会在下次启动时把中断状态转换为可恢复状态。
 - 对外错误会隐藏本机路径、密钥片段、邮箱和手机号；完整异常只保存在本地日志。
 
-以上保护不改变人工审批边界：申请材料评估与生成仍只在用户明确操作后调用 DeepSeek。
+以上保护不改变人工审批边界：申请材料评估与生成仍只在用户明确操作后调用当前 LLM。
 
 ### 自动化中心与增量分析
 
@@ -870,7 +1079,7 @@ apprise:
 移除 `Career Radar Daily Monitor`。安装前会先保存当前设置；任务使用项目自己的
 虚拟环境和 `config.yaml`，支持错过计划时间后尽快补跑，也允许笔记本使用电池时运行。
 
-每日监控可能对新页面或正文变化页面调用 DeepSeek。安装计划任务即表示允许这类定时
+每日监控可能对新页面或正文变化页面调用当前 LLM。安装计划任务即表示允许这类定时
 分析，但每轮仍受以下硬上限约束：
 
 ```yaml
@@ -879,9 +1088,53 @@ crawler:
 ```
 
 抓取器会保存页面的 `ETag`、`Last-Modified`、正文哈希和上次结构化分析。服务器返回
-HTTP 304，或正文哈希未变化时，会复用上次岗位和后续链接，不重复调用 DeepSeek。
+HTTP 304，或正文哈希未变化时，会复用上次岗位和后续链接，不重复调用 LLM。
 公司归属规则、候选人画像、模型或关键分析配置发生变化时，缓存会自动失效并重新分析。
-“测试 DeepSeek 连接”和申请材料工作流仍需要各自的人工确认，不会被每日任务触发。
+“测试 LLM 连接”和申请材料工作流仍需要各自的人工确认，不会被每日任务触发。
+
+## 官网岗位资格筛选与 MiMo 排序
+
+打开岗位中心的企业招聘页（`/jobs?source=official`），默认查看“符合或需要核对”并按投递优先级排序。
+选择“全部资格”可查看明确不符的记录；已有保存的筛选条件仍会优先恢复。
+详情页的“资格与投递优先级”展示每条规则、画像事实、JD 原文与核对日期。
+
+资格由本地规则计算，不消耗模型额度，分成三种状态：
+
+- **资格符合**：已明确的硬性条件符合，仍需核对官网是否在招。
+- **需核对资格**：JD 或画像缺少关键事实，或者条件有放宽例外；不会按不符过滤。
+- **明确不符**：有明确届别、学历、在读、院校、正式工作年限或截止时间冲突。
+
+毕业月份范围优先于标题届别；“优先”条件不会作为硬性排除。院校背景只有在 JD
+明确限制时才核对，普通本科/二本不会自动降低能力评分。个人项目不计为正式工作年限。
+公告可能含多个职位，需要逐岗核对；不完整 JD 需要补齐后再评估。
+这些规则覆盖明确、常见的写法，复杂例外和实际投递资格仍以招聘方说明为准。
+
+在画像页补充学籍状态、毕业月份、教育形式和正式工作年限，点击“保存并刷新资格”。
+不知道的值保留未知；保存后资格立即重新计算，旧 AI 结果标记失效，需要再次评估。
+更新公开技能或项目也会使旧评分失效，避免新画像继续沿用旧建议。
+
+点击“AI 评估并排序”使用当前配置模型；本机配置为 `mimo` / `mimo-v2.6-pro`。
+模型分别评估 AI 应用、Agent/RAG、FDE/技术交付、后端方向相关性与真实项目技能证据，
+给出可核对的引用、差距和下一步。排序分由 40% 方向相关性与 60% 证据覆盖组成，
+**不是录取概率**。不能逐字对上 JD 和画像的引用会被移除并降低证据分；资格不符记录不进入推荐。
+模型输入使用非敏感公开画像，不读取投递资料中的私人联系信息。
+
+评估支持进度、停止、重试和缓存。相同岗位正文、画像、模型与提示词版本复用缓存；
+公告、不完整 JD、明确资格不符的记录跳过模型调用。CLI 操作：
+
+```powershell
+.\.venv\Scripts\python.exe -m career_radar screen-jobs -c config.yaml
+.\.venv\Scripts\python.exe -m career_radar screen-jobs -c config.yaml --company Dify
+```
+
+`--force` 会重新调用模型并产生额度消耗。仅核对本地数据和缓存，不调用模型：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/audit_official_screening.py --config config.yaml
+```
+
+本轮数据结果与限制见 [官网筛选验收记录](research/official-screening-2026-10-05.md)。
+本功能应用于岗位中心和总览；历史日报与推送仍按原有筛选配置处理。
 
 ## License
 

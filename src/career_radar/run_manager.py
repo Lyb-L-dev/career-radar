@@ -201,7 +201,7 @@ class RunManager:
             with self.coordinator.acquire(
                 "website_scan",
                 payload["id"],
-                {"browser", "deepseek"},
+                {"browser", "llm"},
             ):
                 self._execute_reserved(
                     payload,

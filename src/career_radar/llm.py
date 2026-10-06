@@ -249,17 +249,20 @@ class OpenAIProvider(LLMProvider):
 
 
 class DeepSeekProvider(LLMProvider):
-    """使用 OpenAI 兼容的 Chat Completions 接入 DeepSeek JSON Output。"""
+    """OpenAI-compatible Chat Completions with JSON Object + Pydantic validation."""
 
     DEFAULT_BASE_URL = "https://api.deepseek.com"
+    API_KEY_VARIABLE = "DEEPSEEK_API_KEY"
+    PROVIDER_NAME = "DeepSeek"
+    OUTPUT_TOKENS_PARAMETER = "max_tokens"
 
     def __init__(self, config: LLMConfig) -> None:
-        api_key = _require_api_key("DEEPSEEK_API_KEY", "DeepSeek")
+        api_key = _require_api_key(self.API_KEY_VARIABLE, self.PROVIDER_NAME)
         try:
             from openai import OpenAI
         except ImportError as exc:
             raise FatalLLMError(
-                "DeepSeek 适配依赖 openai SDK，请执行 pip install -e ."
+                f"{self.PROVIDER_NAME} 适配依赖 openai SDK，请执行 pip install -e ."
             ) from exc
         self.client = OpenAI(
             api_key=api_key,
@@ -270,7 +273,7 @@ class DeepSeekProvider(LLMProvider):
         self.config = config
 
     def analyze(self, user_prompt: str) -> PageAnalysis:
-        """请求 DeepSeek 的 JSON Object 模式，再用 Pydantic 做第二次严格校验。"""
+        """Request JSON Object output, then validate it with Pydantic."""
 
         schema = json.dumps(PageAnalysis.model_json_schema(), ensure_ascii=False)
         full_prompt = (
@@ -284,24 +287,24 @@ class DeepSeekProvider(LLMProvider):
                 {"role": "user", "content": full_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "max_tokens": self.config.max_output_tokens,
+            self.OUTPUT_TOKENS_PARAMETER: self.config.max_output_tokens,
         }
         if self.config.disable_thinking:
-            # 官方 DeepSeek 支持此扩展；兼容代理不支持时可在 YAML 中关闭。
+            # DeepSeek and MiMo both accept thinking.type=disabled in Chat Completions.
             request["extra_body"] = {"thinking": {"type": "disabled"}}
         try:
             completion = self.client.chat.completions.create(**request)
         except Exception as exc:
-            raise _request_error("DeepSeek", exc) from exc
+            raise _request_error(self.PROVIDER_NAME, exc) from exc
         content = completion.choices[0].message.content or ""
         if not content.strip():
-            raise RetryableLLMError("DeepSeek 返回了空 JSON 内容，将由上层重试")
+            raise RetryableLLMError(f"{self.PROVIDER_NAME} 返回了空 JSON 内容，将由上层重试")
         try:
-            return PageAnalysis.model_validate(_extract_json_object(content, "DeepSeek"))
+            return PageAnalysis.model_validate(_extract_json_object(content, self.PROVIDER_NAME))
         except Exception as exc:
             if isinstance(exc, LLMError):
                 raise
-            raise RetryableLLMError(f"DeepSeek 结构化结果校验失败：{exc}") from exc
+            raise RetryableLLMError(f"{self.PROVIDER_NAME} 结构化结果校验失败：{exc}") from exc
 
     def analyze_reputation(self, user_prompt: str) -> SocialReputationAnalysis:
         schema = json.dumps(SocialReputationAnalysis.model_json_schema(), ensure_ascii=False)
@@ -315,27 +318,27 @@ class DeepSeekProvider(LLMProvider):
                 {"role": "user", "content": full_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "max_tokens": min(self.config.max_output_tokens, 12_000),
+            self.OUTPUT_TOKENS_PARAMETER: min(self.config.max_output_tokens, 12_000),
         }
         if self.config.disable_thinking:
             request["extra_body"] = {"thinking": {"type": "disabled"}}
         try:
             completion = self.client.chat.completions.create(**request)
         except Exception as exc:
-            raise _request_error("DeepSeek 口碑分析", exc) from exc
+            raise _request_error(f"{self.PROVIDER_NAME} 口碑分析", exc) from exc
         content = completion.choices[0].message.content or ""
         try:
             return SocialReputationAnalysis.model_validate(
-                _extract_json_object(content, "DeepSeek")
+                _extract_json_object(content, self.PROVIDER_NAME)
             )
         except Exception as exc:
             if isinstance(exc, LLMError):
                 raise
-            raise RetryableLLMError(f"DeepSeek 口碑结构校验失败：{exc}") from exc
+            raise RetryableLLMError(f"{self.PROVIDER_NAME} 口碑结构校验失败：{exc}") from exc
 
 
 class MiMoProvider(DeepSeekProvider):
-    """Xiaomi MiMo via the same JSON Object gateway used by DeepSeek."""
+    """Xiaomi MiMo V2.6 Pro via its official OpenAI-compatible JSON endpoint."""
 
     DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
     API_KEY_VARIABLE = "XIAOMIMIMO_API_KEY"
@@ -668,7 +671,11 @@ class PageAnalyzer:
                 self.candidate_profile,
                 monitor_mode,
             )
-            analyses.append(self._call_with_retry(prompt))
+            analysis = self._call_with_retry(prompt)
+            # 官方岗位 ID 只能由确定性的 ATS 适配器注入，模型猜测不能成为去重证据。
+            for job in analysis.jobs:
+                job.source_job_id = None
+            analyses.append(analysis)
         merged = _merge_analyses(analyses)
 
         allowed = {canonicalize_url(link.url) for link in document.links}

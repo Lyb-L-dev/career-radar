@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { PageSkeleton } from '@/components/common/StateViews'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router'
 import { Search, Bell, Menu, CircleCheck, TriangleAlert, ChevronDown, UserRound, Settings, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -12,13 +13,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { SidebarContent } from './Sidebar'
-import { CommandPalette } from './CommandPalette'
+const CommandPalette = lazy(() => import('./CommandPalette').then(module => ({ default: module.CommandPalette })))
 import { useUnreadCount, useDashboardStats } from '@/hooks/useData'
 
 /** 顶部左侧当前页面名（根据路由推导）。 */
 function usePageTitle(): string {
   const { pathname } = useLocation()
   if (pathname === '/') return '总览'
+  if (pathname.startsWith('/growth')) return '成长计划'
   if (pathname.startsWith('/jobs/')) return '岗位详情'
   if (pathname.startsWith('/jobs')) return '岗位中心'
   if (pathname.startsWith('/platform-leads')) return '岗位中心'
@@ -79,7 +81,7 @@ function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/[0.04] transition-colors">
+        <button aria-label="用户菜单" className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/[0.04] transition-colors">
           <Avatar className="size-8">
             <AvatarFallback className="bg-brand-soft text-brand-foreground text-[13px] font-medium">26</AvatarFallback>
           </Avatar>
@@ -109,9 +111,20 @@ function UserMenu() {
 export default function AppLayout() {
   const title = usePageTitle()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const shortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl+K'
+  const { pathname } = useLocation()
+  useEffect(() => { window.scrollTo(0, 0) }, [pathname])
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      if (!event.isComposing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setCommandOpen(value => !value) }
+    }
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
+  }, [])
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background"><a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:p-3">跳转到主内容</a>
       {/* 桌面侧边栏 */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 border-r border-black/[0.05] bg-sidebar-background md:block">
         <SidebarContent />
@@ -132,17 +145,17 @@ export default function AppLayout() {
             </SheetContent>
           </Sheet>
 
-          <h1 className="text-[17px] font-semibold text-ink">{title}</h1>
+          <p className="text-[17px] font-semibold text-ink">{title}</p>
 
           <div className="ml-auto flex items-center gap-1.5">
             <button
-              onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))}
+              onClick={() => setCommandOpen(true)} aria-label="打开全局搜索"
               className="flex items-center gap-2 rounded-lg border border-black/[0.08] bg-surface px-3 py-1.5 text-[13px] text-ink-tertiary hover:border-black/[0.16] transition-colors"
             >
               <Search className="size-4" />
               <span className="hidden sm:inline">搜索岗位、企业、运行记录</span>
               <kbd className="hidden sm:inline-flex items-center gap-0.5 rounded border border-black/[0.08] bg-black/[0.03] px-1.5 text-[11px]">
-                ⌘K
+                {shortcut}
               </kbd>
             </button>
             <LastRunStatus />
@@ -152,12 +165,12 @@ export default function AppLayout() {
         </header>
 
         {/* 主内容区 */}
-        <main className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-8 md:py-8">
-          <Outlet />
+        <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1440px] px-4 py-6 md:px-8 md:py-8">
+          <Suspense fallback={<PageSkeleton />}><Outlet /></Suspense>
         </main>
       </div>
 
-      <CommandPalette />
+      {commandOpen && <Suspense fallback={<div role="status" className="fixed bottom-4 right-4 rounded-lg bg-white p-3">正在打开搜索…</div>}><CommandPalette open={commandOpen} onOpenChange={setCommandOpen} /></Suspense>}
     </div>
   )
 }

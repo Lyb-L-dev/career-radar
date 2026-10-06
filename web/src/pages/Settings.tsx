@@ -14,6 +14,9 @@ import {
   ShieldCheck,
   Info,
   CalendarClock,
+  Archive,
+  BadgeCheck,
+  CircleAlert,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,10 +43,31 @@ import {
   getDbStats,
   getAutomationStatus,
   changeAutomation,
+  getBackups,
+  verifyBackup,
+  deleteBackup,
 } from '@/services/settings'
+import type { BackupItem } from '@/services/settings'
 import type { AppSettings, RenderMode, MatchLevel } from '@/types'
 import { MATCH_LEVEL_LABEL } from '@/types'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+
+function formatBackupSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`
+  return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatBackupTime(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN')
+}
+
+function BackupStatus({ status }: { status: BackupItem['integrityStatus'] }) {
+  if (status === 'valid') return <Pill tone="green">校验通过</Pill>
+  if (status === 'invalid') return <Pill tone="red">需要处理</Pill>
+  return <Pill tone="gray">尚未校验</Pill>
+}
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -82,6 +106,7 @@ export default function SettingsPage() {
 
 function SettingsEditor({ settings, initialTab }: { settings: AppSettings; initialTab: string }) {
   const saveSettings = useSaveSettings()
+  const queryClient = useQueryClient()
   const [draft, setDraft] = useState<AppSettings>(settings)
   const [tab, setTab] = useState(initialTab)
 const [llmTesting, setLlmTesting] = useState(false)
@@ -89,8 +114,17 @@ const [llmConfirmOpen, setLlmConfirmOpen] = useState(false)
 const [emailTesting, setEmailTesting] = useState(false)
 const [appriseTesting, setAppriseTesting] = useState(false)
 const [automationAction, setAutomationAction] = useState<null | 'install' | 'remove'>(null)
-  const [dangerAction, setDangerAction] = useState<null | { key: 'clearLogs' | 'rebuildIndex' | 'cleanReports'; title: string; desc: string }>(null)
+  const [dangerAction, setDangerAction] = useState<null | { key: 'export' | 'clearLogs' | 'rebuildIndex' | 'cleanReports'; title: string; desc: string }>(null)
+  const [backupToDelete, setBackupToDelete] = useState<string | null>(null)
+  const [verifyingBackup, setVerifyingBackup] = useState<string | null>(null)
+  const [deletingBackup, setDeletingBackup] = useState(false)
   const { data: dbStats } = useQuery({ queryKey: ['db-stats'], queryFn: getDbStats })
+  const {
+    data: backups = [],
+    isLoading: backupsLoading,
+    isError: backupsError,
+    refetch: refetchBackups,
+  } = useQuery({ queryKey: ['backups'], queryFn: getBackups })
   const { data: automation, refetch: refetchAutomation } = useQuery({
     queryKey: ['automation-status'],
     queryFn: getAutomationStatus,
@@ -154,11 +188,11 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
                   className="rounded-lg font-mono text-[13px]"
                 />
               </Field>
-              <Field label="日报保留天数">
+              <Field label="日报保留天数" hint="每次扫描完成后自动清理过期日报，也可在数据维护页手动执行。">
                 <Input
                   type="number"
                   min={7}
-                  max={365}
+                  max={3650}
                   value={draft.basic.reportRetentionDays}
                   onChange={(e) => patch((s) => ({ ...s, basic: { ...s.basic, reportRetentionDays: Number(e.target.value) } }))}
                   className="rounded-lg"
@@ -196,7 +230,7 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
               <Field label="单家公司最大页面数">
                 <Input type="number" min={1} max={100} value={draft.crawler.maxPagesPerCompany} onChange={(e) => patch((s) => ({ ...s, crawler: { ...s.crawler, maxPagesPerCompany: Number(e.target.value) } }))} className="rounded-lg" />
               </Field>
-              <Field label="单次 AI 页面上限" hint="只统计新页面或正文发生变化的页面；缓存命中不计入">
+              <Field label="单次 LLM 页面上限" hint="只统计新页面或正文发生变化的页面；缓存命中不计入">
                 <Input type="number" min={1} max={5000} value={draft.crawler.maxLlmPagesPerRun} onChange={(e) => patch((s) => ({ ...s, crawler: { ...s.crawler, maxLlmPagesPerRun: Number(e.target.value) } }))} className="rounded-lg" />
               </Field>
               <Field label="请求超时（秒）">
@@ -224,18 +258,11 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
           <Card className="max-w-3xl space-y-5">
             <CardTitle>LLM 设置</CardTitle>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="服务商">
-                <Select
-                  value={draft.llm.provider}
-                  onValueChange={(v) => patch((s) => ({ ...s, llm: { ...s.llm, provider: v as AppSettings['llm']['provider'] } }))}
-                >
-                  <SelectTrigger className="rounded-lg"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="MiMo">小米 MiMo</SelectItem>
-                    <SelectItem value="DeepSeek">DeepSeek</SelectItem>
-                    <SelectItem value="LiteLLM">LiteLLM（统一网关）</SelectItem>
-                  </SelectContent>
-                </Select>
+              <Field label="服务商" hint="由本机配置决定，API Key 只从环境变量读取。">
+                <div className="flex min-h-10 items-center justify-between rounded-lg border border-line bg-surface-subtle px-3">
+                  <span className="text-[14px] font-medium text-ink">{draft.llm.provider}</span>
+                  <Pill tone="green">当前服务</Pill>
+                </div>
               </Field>
               <Field label="模型名称">
                 <Input value={draft.llm.model} onChange={(e) => patch((s) => ({ ...s, llm: { ...s.llm, model: e.target.value } }))} className="rounded-lg" />
@@ -455,7 +482,7 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
               </div>
             </dl>
             <div className="rounded-lg bg-success-soft px-4 py-3 text-[13px] text-success">
-              安装计划任务即表示允许每日监控在新页面或变化页面上调用当前 AI 模型；单次调用范围受“抓取设置 → AI 页面上限”约束。缓存命中页面不会重复调用。连接测试和申请材料仍需单独人工确认。
+              安装计划任务即表示允许每日监控在新页面或变化页面上调用 {draft.llm.provider}；单次调用范围受“抓取设置 → LLM 页面上限”约束。缓存命中页面不会重复调用。连接测试和申请材料仍需单独人工确认。
             </div>
             <div className="flex justify-end gap-2.5">
               {automation?.installed && (
@@ -476,81 +503,181 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
 
         {/* 数据与维护 */}
         <TabsContent value="data" className="mt-5">
-          <div className="grid max-w-4xl gap-5 lg:grid-cols-2">
-            <Card>
-              <CardTitle>
-                <span className="flex items-center gap-2">
-                  <Database className="size-4 text-ink-tertiary" />
-                  数据库统计
-                </span>
-              </CardTitle>
-              <dl className="grid grid-cols-2 gap-3">
-                {[
-                  { label: '岗位数', value: dbStats?.jobs ?? '–' },
-                  { label: '岗位历史记录', value: dbStats?.history ?? '–' },
-                  { label: '日报文件', value: dbStats?.reports ?? '–' },
-                  { label: '运行日志', value: dbStats?.logs ?? '–' },
-                  { label: '数据库大小', value: dbStats ? `${dbStats.sizeMb} MB` : '–' },
-                ].map((s) => (
-                  <div key={s.label} className="rounded-lg bg-surface-subtle p-3.5">
-                    <dd className="text-[20px] font-semibold text-ink tabular-nums">{s.value}</dd>
-                    <dt className="text-[12px] text-ink-tertiary">{s.label}</dt>
-                  </div>
-                ))}
-              </dl>
-            </Card>
+          <div className="max-w-4xl space-y-5">
+            <div className="grid gap-5 lg:grid-cols-2">
+              <Card>
+                <CardTitle>
+                  <span className="flex items-center gap-2">
+                    <Database className="size-4 text-ink-tertiary" />
+                    数据库统计
+                  </span>
+                </CardTitle>
+                <dl className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: '岗位数', value: dbStats?.jobs ?? '–' },
+                    { label: '岗位历史记录', value: dbStats?.history ?? '–' },
+                    { label: '日报文件', value: dbStats?.reports ?? '–' },
+                    { label: '运行日志', value: dbStats?.logs ?? '–' },
+                    { label: '数据库大小', value: dbStats ? `${dbStats.sizeMb} MB` : '–' },
+                  ].map((s) => (
+                    <div key={s.label} className="rounded-lg bg-surface-subtle p-3.5">
+                      <dd className="text-[20px] font-semibold text-ink tabular-nums">{s.value}</dd>
+                      <dt className="text-[12px] text-ink-tertiary">{s.label}</dt>
+                    </div>
+                  ))}
+                </dl>
+              </Card>
+
+              <Card>
+                <CardTitle>
+                  <span className="flex items-center gap-2">
+                    <FolderCog className="size-4 text-ink-tertiary" />
+                    维护操作
+                  </span>
+                </CardTitle>
+                <div className="space-y-2.5">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={async () => {
+                      try {
+                        const res = await runMaintenance('recalcMatch')
+                        toast.success(res.message)
+                      } catch (error) {
+                        toast.error('操作失败', { description: error instanceof Error ? error.message : '请稍后重试。' })
+                      }
+                    }}
+                  >
+                    <RefreshCw className="size-4" />
+                    重新计算岗位匹配度
+                  </Button>
+                  <Button variant="outline" className="w-full justify-start" onClick={() => setDangerAction({ key: 'rebuildIndex', title: '重建岗位索引？', desc: '将根据现有岗位数据重建检索索引，期间搜索可能短暂变慢。数据本身不受影响。' })}>
+                    <Database className="size-4" />
+                    重建岗位索引
+                  </Button>
+                  <Button variant="outline" className="w-full justify-start" onClick={() => setDangerAction({ key: 'cleanReports', title: '清理历史日报？', desc: `将删除超过保留期（${draft.basic.reportRetentionDays} 天）的日报文件，不可恢复。` })}>
+                    <Trash2 className="size-4" />
+                    清理历史日报
+                  </Button>
+                  <Button variant="outline" className="w-full justify-start text-danger hover:text-danger" onClick={() => setDangerAction({ key: 'clearLogs', title: '清空运行日志？', desc: '将清空全部运行日志，任务统计与岗位数据保留。此操作不可撤销。' })}>
+                    <Trash2 className="size-4" />
+                    清空运行日志
+                  </Button>
+                </div>
+              </Card>
+            </div>
 
             <Card>
-              <CardTitle>
+              <CardTitle
+                extra={
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="icon" aria-label="刷新备份列表" onClick={() => refetchBackups()}>
+                      <RefreshCw className="size-4" />
+                    </Button>
+                    <Button
+                      className="bg-brand text-white hover:bg-brand-hover"
+                      onClick={() => setDangerAction({
+                        key: 'export',
+                        title: '创建本地完整备份？',
+                        desc: `将在项目 private/backups 中创建私有 ZIP，并按已保存策略只保留最新 ${settings.basic.backupRetentionCount} 份；不包含 .env，也不会通过 API 下载。`,
+                      })}
+                    >
+                      <Download className="size-4" />
+                      创建备份
+                    </Button>
+                  </div>
+                }
+              >
                 <span className="flex items-center gap-2">
-                  <FolderCog className="size-4 text-ink-tertiary" />
-                  维护操作
+                  <Archive className="size-4 text-brand" />
+                  本地备份
                 </span>
               </CardTitle>
-              <div className="space-y-2.5">
-                <Button
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={async () => {
-                    try {
-                      const res = await runMaintenance('export')
-                      toast.success(res.message)
-                    } catch (error) {
-                      toast.error('无法自动导出', { description: error instanceof Error ? error.message : '请手工备份数据。' })
-                    }
-                  }}
-                >
-                  <Download className="size-4" />
-                  导出全部数据
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={async () => {
-                    try {
-                      const res = await runMaintenance('recalcMatch')
-                      toast.success(res.message)
-                    } catch (error) {
-                      toast.error('操作失败', { description: error instanceof Error ? error.message : '请稍后重试。' })
-                    }
-                  }}
-                >
-                  <RefreshCw className="size-4" />
-                  重新计算岗位匹配度
-                </Button>
-                <Button variant="outline" className="w-full justify-start" onClick={() => setDangerAction({ key: 'rebuildIndex', title: '重建岗位索引？', desc: '将根据现有岗位数据重建检索索引，期间搜索可能短暂变慢。数据本身不受影响。' })}>
-                  <Database className="size-4" />
-                  重建岗位索引
-                </Button>
-                <Button variant="outline" className="w-full justify-start" onClick={() => setDangerAction({ key: 'cleanReports', title: '清理历史日报？', desc: `将删除超过保留期（${draft.basic.reportRetentionDays} 天）的日报文件，不可恢复。` })}>
-                  <Trash2 className="size-4" />
-                  清理历史日报
-                </Button>
-                <Button variant="outline" className="w-full justify-start text-danger hover:text-danger" onClick={() => setDangerAction({ key: 'clearLogs', title: '清空运行日志？', desc: '将删除全部运行日志（约 128 条），任务统计与岗位数据保留。此操作不可撤销。' })}>
-                  <Trash2 className="size-4" />
-                  清空运行日志
+
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3 rounded-lg bg-surface-subtle px-4 py-3.5">
+                <Field label="自动保留数量" hint="更改后先保存；新备份创建成功后，只删除超出数量的最旧备份。">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    aria-label="自动保留备份数量"
+                    value={draft.basic.backupRetentionCount}
+                    onChange={(event) => patch((state) => ({
+                      ...state,
+                      basic: { ...state.basic, backupRetentionCount: Number(event.target.value) },
+                    }))}
+                    className="w-32 rounded-lg bg-surface"
+                  />
+                </Field>
+                <Button variant="outline" onClick={() => save('备份保留设置')} disabled={saveSettings.isPending}>
+                  {saveSettings.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                  保存保留策略
                 </Button>
               </div>
+
+              {backupsLoading ? (
+                <div className="flex items-center justify-center gap-2 py-10 text-[13px] text-ink-secondary" role="status">
+                  <Loader2 className="size-4 animate-spin" />
+                  正在读取本地备份…
+                </div>
+              ) : backupsError ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-danger-soft px-4 py-3 text-[13px] text-danger" role="alert">
+                  <span className="flex items-center gap-2"><CircleAlert className="size-4" />无法读取备份列表，请检查本地目录权限。</span>
+                  <Button variant="outline" size="sm" onClick={() => refetchBackups()}>重试</Button>
+                </div>
+              ) : backups.length === 0 ? (
+                <div className="py-10 text-center">
+                  <Archive className="mx-auto size-7 text-ink-tertiary" />
+                  <p className="mt-3 text-[14px] font-medium text-ink">还没有本地备份</p>
+                  <p className="mt-1 text-[13px] text-ink-secondary">创建后可在这里查看、校验完整性或确认删除。</p>
+                </div>
+              ) : (
+                <ul className="max-h-96 divide-y divide-line overflow-y-auto scrollbar-thin">
+                  {backups.map((backup) => (
+                    <li key={backup.name} className="flex flex-wrap items-center justify-between gap-3 py-3.5">
+                      <div className="min-w-0 flex-1">
+                        <p className="break-all text-[13px] font-medium text-ink">{backup.name}</p>
+                        <p className="mt-1 text-[12px] text-ink-tertiary">
+                          {formatBackupTime(backup.createdAt)} · {formatBackupSize(backup.sizeBytes)}
+                          {backup.includedFiles === null ? '' : ` · ${backup.includedFiles} 个文件`}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <BackupStatus status={backup.integrityStatus} />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={verifyingBackup !== null}
+                          onClick={async () => {
+                            setVerifyingBackup(backup.name)
+                            try {
+                              const result = await verifyBackup(backup.name)
+                              queryClient.setQueryData<BackupItem[]>(['backups'], (current = []) =>
+                                current.map((item) => item.name === backup.name
+                                  ? { ...item, integrityStatus: result.integrityStatus }
+                                  : item),
+                              )
+                              if (result.ok) toast.success(result.message)
+                              else toast.error('备份校验未通过', { description: result.message })
+                            } catch (error) {
+                              toast.error('无法校验备份', { description: error instanceof Error ? error.message : '请检查文件是否仍然存在。' })
+                            } finally {
+                              setVerifyingBackup(null)
+                            }
+                          }}
+                        >
+                          {verifyingBackup === backup.name ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
+                          {verifyingBackup === backup.name ? '校验中…' : '校验'}
+                        </Button>
+                        <Button variant="ghost" size="sm" className="text-danger hover:text-danger" onClick={() => setBackupToDelete(backup.name)}>
+                          <Trash2 className="size-4" />
+                          删除
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Card>
           </div>
         </TabsContent>
@@ -563,7 +690,7 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
         description={
           automationAction === 'remove'
             ? '将从 Windows 任务计划程序中移除 Career Radar，每日扫描不再自动启动。'
-            : `将保存当前设置，并在 Windows 中创建每天 ${draft.basic.dailyRunTime} 运行的任务。新页面或变化页面可能调用当前 AI 模型，单次最多分析 ${draft.crawler.maxLlmPagesPerRun} 页；未变化页面使用缓存。`
+            : `将保存当前设置，并在 Windows 中创建每天 ${draft.basic.dailyRunTime} 运行的任务。新页面或变化页面可能调用 ${draft.llm.provider}，单次最多分析 ${draft.crawler.maxLlmPagesPerRun} 页；未变化页面使用缓存。`
         }
         confirmLabel={automationAction === 'remove' ? '确认移除' : '确认安装'}
         destructive={automationAction === 'remove'}
@@ -586,17 +713,17 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
       <ConfirmDialog
         open={llmConfirmOpen}
         onOpenChange={setLlmConfirmOpen}
-        title="确认测试模型连接？"
-        description="本次测试会向当前配置的模型发送一次最小结构化请求，可能产生少量 API 费用。系统不会自动重复测试。"
+        title={`确认测试 ${draft.llm.provider} 连接？`}
+        description={`本次测试会向当前 ${draft.llm.provider} 模型发送一次最小结构化请求，可能产生少量 API 费用。系统不会自动重复测试。`}
         confirmLabel="确认并调用一次"
         onConfirm={async () => {
           setLlmConfirmOpen(false)
           setLlmTesting(true)
           try {
             const res = await testLlmConnection(true)
-            toast.success('模型连接正常', { description: `模型 ${res.model} · 延迟 ${res.latencyMs}ms` })
+            toast.success(`${draft.llm.provider} 连接正常`, { description: `模型 ${res.model} · 延迟 ${res.latencyMs}ms` })
           } catch (error) {
-            toast.error('模型连接失败', { description: error instanceof Error ? error.message : '请检查 API 配置。' })
+            toast.error(`${draft.llm.provider} 连接失败`, { description: error instanceof Error ? error.message : '请检查 API 配置。' })
           } finally {
             setLlmTesting(false)
           }
@@ -608,18 +735,52 @@ const [automationAction, setAutomationAction] = useState<null | 'install' | 'rem
         onOpenChange={(v) => !v && setDangerAction(null)}
         title={dangerAction?.title ?? ''}
         description={dangerAction?.desc ?? ''}
-        confirmLabel="确认执行"
-        destructive
+        confirmLabel={dangerAction?.key === 'export' ? '创建本地备份' : '确认执行'}
+        destructive={dangerAction?.key === 'clearLogs' || dangerAction?.key === 'cleanReports'}
         onConfirm={async () => {
           try {
             if (dangerAction) {
               const res = await runMaintenance(dangerAction.key)
-              toast.success(res.message)
+              if (dangerAction.key === 'export') {
+                await queryClient.invalidateQueries({ queryKey: ['backups'] })
+              }
+              toast.success(res.message, {
+                description: res.prunedBackups
+                  ? `已按保留策略清理 ${res.prunedBackups} 份最旧备份。`
+                  : undefined,
+              })
             }
           } catch (error) {
             toast.error('维护操作失败', { description: error instanceof Error ? error.message : '请稍后重试。' })
           } finally {
             setDangerAction(null)
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={backupToDelete !== null}
+        onOpenChange={(open) => !open && setBackupToDelete(null)}
+        title="删除这份本地备份？"
+        description={backupToDelete
+          ? `将永久删除 ${backupToDelete}。备份包含私有配置和运行数据，删除后无法从 Career Radar 恢复。`
+          : ''}
+        confirmLabel="确认删除备份"
+        destructive
+        confirmDisabled={deletingBackup}
+        onConfirm={async () => {
+          const name = backupToDelete
+          if (!name) return
+          setDeletingBackup(true)
+          try {
+            const result = await deleteBackup(name, true)
+            await queryClient.invalidateQueries({ queryKey: ['backups'] })
+            toast.success(result.message)
+          } catch (error) {
+            toast.error('备份删除失败', { description: error instanceof Error ? error.message : '请检查文件是否被其他程序占用。' })
+          } finally {
+            setDeletingBackup(false)
+            setBackupToDelete(null)
           }
         }}
       />

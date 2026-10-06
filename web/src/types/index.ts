@@ -114,6 +114,7 @@ export interface Job {
   gradYearMatch: MatchLevel
   abilityMatch: MatchLevel
   difficulty: number // 0-10
+  difficultyEvaluated?: boolean
   isFavorite: boolean
   isApplied: boolean
   notInterested: boolean
@@ -125,6 +126,15 @@ export interface Job {
   lastUpdatedAt: ISODateTime
   recommendReason?: string
   highlyRecommended?: boolean
+  eligibility?: OfficialQualification
+  aiAssessment?: {
+    status: 'pending' | 'current' | 'stale' | 'failed'
+    model: string
+    evaluatedAt?: string | null
+    error?: string | null
+    result?: OfficialFit | null
+  }
+  priority?: { tier: 'high' | 'medium' | 'low' | 'verify' | 'defer' | 'pending'; score: number | null; label: string }
   tags: string[]
   overview: string
   responsibilities: string[]
@@ -335,7 +345,7 @@ export interface ReputationHealth {
   platforms: Array<{ key: ReputationPlatform['key']; label: string }>
 }
 
-export type JobTab = 'recommended' | 'notice' | 'new' | 'updated' | 'all' | 'favorite'
+export type JobTab = 'recommended' | 'unreviewed' | 'notice' | 'new' | 'updated' | 'all' | 'favorite'
 
 export interface JobFilter {
   tab: JobTab
@@ -351,6 +361,39 @@ export interface JobFilter {
   difficultyMax?: number
   changedWithinDays?: number
   hasApplyUrl?: boolean
+  eligibility?: 'available' | 'eligible' | 'review' | 'ineligible'
+  sort?: 'priority' | 'updated'
+}
+
+export interface OfficialQualification {
+  verdict: 'eligible' | 'review' | 'ineligible'
+  summary: string
+  checked_at: string
+  checks: Array<{ dimension: string; verdict: 'met' | 'unmet' | 'unknown'; requirement: string; job_quote: string; candidate_fact: string; required: boolean }>
+}
+
+export interface OfficialFit {
+  direction: 'ai_application' | 'agent_rag' | 'fde_delivery' | 'backend' | 'other'
+  direction_score: number
+  evidence_score: number
+  summary: string
+  matches: Array<{ requirement: string; job_quote: string; candidate_quote: string; reason: string }>
+  gaps: Array<{ job_quote: string; detail: string }>
+  next_steps: string[]
+  grounding_warnings: string[]
+}
+
+export interface OfficialScreeningStatus {
+  status: 'idle' | 'running' | 'completed' | 'partial' | 'cancelled'
+  total: number
+  processed: number
+  evaluated: number
+  cached: number
+  ineligible: number
+  failed: number
+  skipped: number
+  error?: string | null
+  currentTitle?: string | null
 }
 
 // ---------- 企业 ----------
@@ -826,6 +869,11 @@ export interface CandidateProfile {
   excludedDirections: string[]
   notes: string
   completeness: number
+  studentStatus?: 'unknown' | 'enrolled' | 'graduated'
+  graduationMonth?: string | null
+  formalWorkYears?: number | null
+  educationMode?: 'unknown' | 'full_time' | 'part_time'
+  rankingFocus?: string[]
 }
 
 // ---------- 系统设置 ----------
@@ -836,6 +884,7 @@ export interface AppSettings {
     dbPath: string
     dailyRunTime: string
     reportRetentionDays: number
+    backupRetentionCount: number
   }
   crawler: {
     minDelay: number
@@ -848,7 +897,7 @@ export interface AppSettings {
     respectRobots: boolean
   }
     llm: {
-      provider: 'DeepSeek' | 'MiMo' | 'OpenAI' | 'Anthropic' | 'LiteLLM'
+      provider: 'DeepSeek' | 'MiMo'
     model: string
     apiBaseUrl: string
     apiKeyMasked: string

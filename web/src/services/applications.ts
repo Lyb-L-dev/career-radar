@@ -66,3 +66,12 @@ export async function downloadApplicationArtifact(
   requireRealMode()
   return apiDownload(artifact.downloadUrl, artifact.fileName)
 }
+
+export async function downloadFormPilotProfile(applicationId: string): Promise<void> {
+  requireRealMode()
+  return apiDownload(
+    `/applications/${encodeURIComponent(applicationId)}/formpilot-profile`,
+    'career-radar-formpilot.json',
+    { method: 'POST' },
+  )
+}
