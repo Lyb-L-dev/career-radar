@@ -80,8 +80,9 @@ reputation:
   max_evidence_chars: 4000
 
 wechat_recruitment:
-  enabled: true
-  opencli_command: ${USERPROFILE}\.agent-reach\node-global\opencli.cmd
+  # 安装并连接 OpenCLI 后再启用；Windows 自定义路径只写入本机 config.yaml。
+  enabled: false
+  opencli_command: opencli
   results_per_query: 10
   max_articles_per_scan: 20
   command_timeout_seconds: 90
