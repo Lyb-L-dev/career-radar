@@ -52,6 +52,7 @@ career_radar = ["application/prompts/*.md"]
 [tool.pytest.ini_options]
 addopts = "-q -p no:cacheprovider"
 testpaths = ["tests"]
+pythonpath = [".", "src"]
 
 [tool.ruff]
 line-length = 100
