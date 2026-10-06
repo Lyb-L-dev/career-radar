@@ -62,32 +62,33 @@ module.exports = {
         },
         // Career Radar 品牌与语义色板
         brand: {
-          DEFAULT: "#1677FF",
+          mark: "#1677FF",
+          DEFAULT: "#0B4FC4",
           hover: "#0958D9",
           soft: "#EAF3FF",
           foreground: "#0B4FC4",
         },
         success: {
-          DEFAULT: "#22A06B",
+          DEFAULT: "#137A4F",
           soft: "#E9F7F1",
         },
         warning: {
-          DEFAULT: "#D97706",
+          DEFAULT: "#92400E",
           soft: "#FBF2E2",
         },
         danger: {
-          DEFAULT: "#D92D20",
+          DEFAULT: "#B42318",
           soft: "#FCEBEA",
         },
         highlight: {
-          DEFAULT: "#FF6900",
+          DEFAULT: "#B54708",
           soft: "#FFF1E6",
         },
         ink: {
           DEFAULT: "#1D1D1F",
           body: "#333336",
           secondary: "#6E6E73",
-          tertiary: "#8E8E93",
+          tertiary: "#6E6E73",
         },
         surface: {
           DEFAULT: "#FFFFFF",

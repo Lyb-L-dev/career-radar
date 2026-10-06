@@ -631,7 +631,7 @@ class ReputationManager:
             with self.coordinator.acquire(
                 "reputation",
                 payload["id"],
-                {"opencli", "deepseek"},
+                {"opencli", "llm"},
             ):
                 self._execute_reserved(payload)
         except TaskCoordinatorClosed:
@@ -706,7 +706,7 @@ class ReputationManager:
                     payload["errors"].append(
                         public_error_message(
                             exc,
-                            context="DeepSeek 口碑分析",
+                            context=f"{settings.llm.provider} 口碑分析",
                             limit=500,
                         )
                     )

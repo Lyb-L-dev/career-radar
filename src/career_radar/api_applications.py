@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from .application.document_renderer import file_sha256
+from .application.formpilot_export import to_formpilot_resume
 from .application.models import (
     APPLICATION_STATUS_PROGRESS,
     ApplicationRun,
     ApplicationStatus,
+    ProfileVerificationStatus,
 )
 from .application.profile import ApplicationProfileError, load_application_profile, profile_summary
 from .application.repository import ApplicationRepository
@@ -185,6 +188,30 @@ def create_applications_router(
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {"ok": True, "applicationId": run.id}
+
+    @router.post("/applications/{application_id}/formpilot-profile")
+    def export_formpilot_profile(application_id: str) -> Response:
+        """在用户主动下载时导出已批准任务的画像，不把联系方式放进列表 API。"""
+
+        repository = _repository(manager)
+        run = repository.get_run(application_id)
+        if run is None:
+            raise HTTPException(404, "申请任务不存在")
+        if run.status != ApplicationStatus.READY:
+            raise HTTPException(409, "申请材料尚未完成，不能导出填表资料")
+        profile = repository.get_profile_snapshot(application_id)
+        if profile is None or profile.verification_status != ProfileVerificationStatus.CONFIRMED:
+            raise HTTPException(409, "申请画像不存在或未经确认")
+        payload = json.dumps(to_formpilot_resume(profile), ensure_ascii=False, indent=2)
+        return Response(
+            content=payload,
+            media_type="application/json",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'attachment; filename="career-radar-formpilot.json"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @router.get("/applications/{application_id}/artifacts/{kind}")
     def download_artifact(application_id: str, kind: str):  # type: ignore[no-untyped-def]

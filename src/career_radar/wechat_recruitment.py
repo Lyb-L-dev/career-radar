@@ -809,9 +809,9 @@ class WechatRecruitmentManager:
                         published_at=article.get("publishedAt"),
                         source_url=article["url"],
                         application_method="企业官方招聘公众号发布",
-                        match_reason="公众号自动导入，尚未使用 DeepSeek 评估届别匹配",
-                        profile_fit_reason="公众号自动导入，尚未使用 DeepSeek 评估能力匹配",
-                        difficulty_reason="公众号自动导入，尚未使用 DeepSeek 评估投递难度",
+                        match_reason="公众号自动导入，尚未使用 LLM 评估届别匹配",
+                        profile_fit_reason="公众号自动导入，尚未使用 LLM 评估能力匹配",
+                        difficulty_reason="公众号自动导入，尚未使用 LLM 评估投递难度",
                     )
                 ],
                 now,

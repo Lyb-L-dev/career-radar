@@ -5,6 +5,7 @@ import { PageSkeleton } from '@/components/common/StateViews'
 
 const OnboardingPage = lazy(() => import('@/pages/Onboarding'))
 const DashboardPage = lazy(() => import('@/pages/Dashboard'))
+const GrowthPage = lazy(() => import('@/pages/Growth'))
 const JobHubPage = lazy(() => import('@/pages/JobHub'))
 const JobDetailPage = lazy(() => import('@/pages/JobDetail'))
 const CompaniesPage = lazy(() => import('@/pages/Companies'))
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route element={<AppLayout />}>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/growth" element={<GrowthPage />} />
           <Route path="/jobs" element={<JobHubPage />} />
           <Route path="/platform-leads" element={<Navigate to="/jobs?source=boss" replace />} />
           <Route path="/jobs/:id" element={<JobDetailPage />} />

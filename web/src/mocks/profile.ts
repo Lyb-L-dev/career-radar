@@ -46,6 +46,7 @@ export const settings: AppSettings = {
     dbPath: './data/career_radar.db',
     dailyRunTime: '08:00',
     reportRetentionDays: 90,
+    backupRetentionCount: 10,
   },
   crawler: {
     minDelay: 5,

@@ -286,7 +286,7 @@ def test_manager_imports_only_verified_official_article(
     assert len(jobs) == 1
     assert jobs[0].record_type == "notice"
     assert jobs[0].company == "示例数据科技"
-    assert "DeepSeek" in (jobs[0].match_reason or "")
+    assert "LLM" in (jobs[0].match_reason or "")
 
 
 def test_manager_recovers_unfinished_scan_after_restart(tmp_path: Path) -> None:

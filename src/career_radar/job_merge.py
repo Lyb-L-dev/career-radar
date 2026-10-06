@@ -75,6 +75,8 @@ def is_same_job(
     if normalized(first.company) and normalized(second.company):
         if normalized(first.company) != normalized(second.company):
             return False
+    if first.source_job_id and second.source_job_id:
+        return first.source_job_id == second.source_job_id
     if normalized(first.title) != normalized(second.title):
         return False
     if not _locations_compatible(
@@ -160,6 +162,7 @@ def merge_job_postings(
         "contact_email",
         "application_method",
         "source_url",
+        "source_job_id",
         "match_reason",
         "profile_fit_reason",
         "difficulty_reason",

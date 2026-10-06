@@ -35,7 +35,7 @@ export function Card({
   padded?: boolean
 }) {
   return (
-    <div className={cn('bg-surface rounded-xl shadow-card', padded && 'p-6', className)}>
+    <div className={cn('min-w-0 bg-surface rounded-xl', padded && 'p-5 md:p-6', className)}>
       {children}
     </div>
   )
@@ -44,7 +44,7 @@ export function Card({
 /** 卡片内模块标题 20px */
 export function CardTitle({ children, extra }: { children: ReactNode; extra?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between mb-4">
+    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
       <h2 className="text-[18px] font-semibold text-ink">{children}</h2>
       {extra}
     </div>

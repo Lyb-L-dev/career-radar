@@ -59,21 +59,102 @@ export async function testLlmConnection(confirmed: boolean): Promise<{ ok: boole
     return delay({ ok: true, message: '测试推送已发送，请在对应渠道查收。' }, 800, 1200)
   }
   
-  export interface MaintenanceResult {
+export interface MaintenanceResult {
   ok: boolean
+  message: string
+  backupName?: string
+  includedFiles?: number
+  sizeBytes?: number
+  removed?: number
+  cleared?: number
+  prunedBackups?: number
+}
+
+export interface BackupItem {
+  name: string
+  createdAt: string
+  sizeBytes: number
+  includedFiles: number | null
+  integrityStatus: 'unchecked' | 'valid' | 'invalid'
+}
+
+export interface BackupVerification {
+  ok: boolean
+  name: string
+  integrityStatus: 'valid' | 'invalid'
+  checkedFiles: number
+  databaseIntegrity: 'ok' | 'not_present' | 'not_checked'
   message: string
 }
 
+const mockBackups: BackupItem[] = []
+
 export async function runMaintenance(action: 'export' | 'clearLogs' | 'rebuildIndex' | 'recalcMatch' | 'cleanReports'): Promise<MaintenanceResult> {
   if (!USE_MOCK) return apiRequest(`/settings/maintenance/${action}`, { method: 'POST' })
+  if (action === 'export') {
+    const now = new Date()
+    const date = now.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
+    const name = `career-radar-backup-${date}-${String(now.getMilliseconds() * 1000).padStart(6, '0')}.zip`
+    const backup: BackupItem = {
+      name,
+      createdAt: now.toISOString(),
+      sizeBytes: 2048,
+      includedFiles: 12,
+      integrityStatus: 'unchecked',
+    }
+    mockBackups.unshift(backup)
+    const prunedBackups = Math.max(0, mockBackups.length - settings.basic.backupRetentionCount)
+    mockBackups.splice(settings.basic.backupRetentionCount)
+    return delay({
+      ok: true,
+      message: `本地备份已创建：${name}`,
+      backupName: name,
+      includedFiles: backup.includedFiles ?? 0,
+      sizeBytes: backup.sizeBytes,
+      prunedBackups,
+    }, 600, 1200)
+  }
   const messages: Record<string, string> = {
-    export: '全部数据已导出为备份压缩包。',
     clearLogs: '运行日志已清空，历史任务统计保留。',
     rebuildIndex: '岗位索引已重建完成。',
     recalcMatch: '已按当前画像重新计算全部岗位匹配度。',
     cleanReports: '超出保留期的历史日报已清理。',
   }
   return delay({ ok: true, message: messages[action] }, 600, 1200)
+}
+
+export async function getBackups(): Promise<BackupItem[]> {
+  if (!USE_MOCK) return apiRequest('/settings/backups')
+  return delay(copy(mockBackups))
+}
+
+export async function verifyBackup(name: string): Promise<BackupVerification> {
+  if (!USE_MOCK) {
+    return apiRequest(`/settings/backups/${encodeURIComponent(name)}/verify`, { method: 'POST' })
+  }
+  const backup = mockBackups.find((item) => item.name === name)
+  if (backup) backup.integrityStatus = 'valid'
+  return delay({
+    ok: true,
+    name,
+    integrityStatus: 'valid',
+    checkedFiles: 8,
+    databaseIntegrity: 'ok',
+    message: '备份完整性校验通过',
+  })
+}
+
+export async function deleteBackup(name: string, confirmed: boolean): Promise<{ ok: boolean; name: string; message: string }> {
+  if (!USE_MOCK) {
+    return apiRequest(`/settings/backups/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmed }),
+    })
+  }
+  if (!confirmed) throw new Error('请先确认删除这份本地备份')
+  const index = mockBackups.findIndex((backup) => backup.name === name)
+  if (index >= 0) mockBackups.splice(index, 1)
+  return delay({ ok: true, name, message: '本地备份已删除' })
 }
 
 export async function getDbStats(): Promise<{ jobs: number; history: number; reports: number; logs: number; sizeMb: number }> {

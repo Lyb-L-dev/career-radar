@@ -279,9 +279,10 @@ def test_company_ats_source_loads_from_yaml(tmp_path: Path) -> None:
     assert settings.companies[0].ats_source.tenant == "acme"
 
 
-def test_example_config_is_loadable() -> None:
+def test_example_config_is_loadable(monkeypatch: pytest.MonkeyPatch) -> None:
     """示例配置必须能通过完整校验，避免模板与真实配置双向漂移。"""
 
+    monkeypatch.delenv("USERPROFILE", raising=False)
     example = Path(__file__).resolve().parents[1] / "config.example.yaml"
     settings = load_settings(example)
 

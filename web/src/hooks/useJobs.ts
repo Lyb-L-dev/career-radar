@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import * as jobsApi from '@/services/jobs'
 import type { JobFilter } from '@/types'
 
@@ -72,5 +73,32 @@ export function useFavoriteMany() {
   return useMutation({
     mutationFn: (ids: string[]) => jobsApi.favoriteMany(ids),
     onSuccess: invalidate,
+  })
+}
+
+export function useOfficialScreeningStatus() {
+  const qc = useQueryClient()
+  const query = useQuery({
+    queryKey: ['official-screening'],
+    queryFn: jobsApi.getOfficialScreeningStatus,
+    refetchInterval: (q) => q.state.data?.status === 'running' ? 1500 : false,
+  })
+  const processed = query.data?.processed
+  const status = query.data?.status
+  useEffect(() => {
+    if (processed !== undefined) {
+      void qc.invalidateQueries({ queryKey: ['jobs'] })
+      void qc.invalidateQueries({ queryKey: ['job'] })
+      void qc.invalidateQueries({ queryKey: ['job-counts'] })
+    }
+  }, [processed, status, qc])
+  return query
+}
+
+export function useStartOfficialScreening() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, force }: { ids?: string[]; force?: boolean }) => jobsApi.startOfficialScreening(ids, force),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['official-screening'] }),
   })
 }

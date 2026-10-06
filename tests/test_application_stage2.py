@@ -18,7 +18,7 @@ from career_radar.application.document_renderer import (
 from career_radar.application.document_verifier import ApplicationDocumentVerifier
 from career_radar.application.document_workflow import ApplicationDocumentWorkflow
 from career_radar.application.evaluator import DIMENSION_WEIGHTS, JobApplicationEvaluator
-from career_radar.application.llm import DeepSeekApplicationGateway
+from career_radar.application.llm import CompatibleApplicationGateway, DeepSeekApplicationGateway
 from career_radar.application.models import (
     ApplicationConfig,
     ApplicationDraftBundle,
@@ -396,8 +396,10 @@ class _FakeCompletions:
     def __init__(self, values: list[object]) -> None:
         self.values = values
         self.calls = 0
+        self.requests: list[dict] = []
 
-    def create(self, **_request):
+    def create(self, **request):
+        self.requests.append(request)
         value = self.values[self.calls]
         self.calls += 1
         if isinstance(value, Exception):
@@ -437,6 +439,25 @@ def test_deepseek_gateway_retries_invalid_structure_but_not_auth_failure() -> No
     with pytest.raises(FatalLLMError):
         fatal_gateway.generate(JobFitEvaluation, "system", "user")
     assert fatal_completions.calls == 1
+
+
+def test_mimo_application_gateway_uses_json_mode_and_completion_token_limit() -> None:
+    completions = _FakeCompletions([_evaluation_payload()])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    gateway = CompatibleApplicationGateway(
+        LLMConfig(provider="mimo", model="mimo-v2.6-pro", max_retries=1,
+                  max_output_tokens=4096, disable_thinking=True),
+        client=client,
+    )
+
+    result = gateway.generate(JobFitEvaluation, "system", "user")
+
+    assert result.difficulty_score == 6
+    request = completions.requests[0]
+    assert request["model"] == "mimo-v2.6-pro"
+    assert request["max_completion_tokens"] == 4096
+    assert "max_tokens" not in request
+    assert request["response_format"] == {"type": "json_object"}
 
 
 class _FakeRenderer:

@@ -24,7 +24,7 @@ import { recalculateMatch } from '@/services/settings'
 import type { CandidateProfile, SkillLevel, SkillTag } from '@/types'
 import { cn } from '@/lib/utils'
 
-const ROLE_OPTIONS = ['AI 应用', '数据分析', '产品助理', '测试', '运维', '后端开发', '前端开发', '内容运营', '其他']
+const ROLE_OPTIONS = ['AI 应用', 'Agent/RAG', 'FDE/技术交付', '数据分析', '产品助理', '测试', '运维', '后端开发', '前端开发', '内容运营', '其他']
 const SKILL_LEVELS: SkillLevel[] = ['了解', '熟悉', '熟练']
 
 function TagPicker({
@@ -96,7 +96,7 @@ function ProfileEditor({ profile }: { profile: CandidateProfile }) {
       if (recalc) {
         setRecalcing(true)
         const res = await recalculateMatch()
-        toast.success('画像已保存', { description: res.updated > 0 ? `已更新 ${res.updated} 个岗位的匹配结果。` : '新画像将在下一次真实扫描时参与评分。' })
+        toast.success('画像已保存', { description: res.updated > 0 ? `已更新 ${res.updated} 个岗位的匹配结果。` : '资格已即时更新；AI 排序需要在岗位中心重新评估。' })
       } else {
         toast.success('画像已保存')
       }
@@ -162,6 +162,28 @@ function ProfileEditor({ profile }: { profile: CandidateProfile }) {
               onChange={(e) => patch({ schoolBackground: e.target.value })}
               className="rounded-lg"
             />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="student-status">当前学籍状态</Label>
+              <Select value={draft.studentStatus ?? 'unknown'} onValueChange={(v) => patch({ studentStatus: v as CandidateProfile['studentStatus'] })}>
+                <SelectTrigger id="student-status"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="unknown">未确认</SelectItem><SelectItem value="enrolled">在读</SelectItem><SelectItem value="graduated">已毕业</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="education-mode">教育形式</Label>
+              <Select value={draft.educationMode ?? 'unknown'} onValueChange={(v) => patch({ educationMode: v as CandidateProfile['educationMode'] })}>
+                <SelectTrigger id="education-mode"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="unknown">未确认</SelectItem><SelectItem value="full_time">全日制 / 统招</SelectItem><SelectItem value="part_time">非全日制</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5"><Label htmlFor="graduation-month">毕业月份</Label><Input id="graduation-month" type="month" value={draft.graduationMonth ?? ''} onChange={(e) => patch({ graduationMonth: e.target.value || null })} /></div>
+            <div className="space-y-1.5"><Label htmlFor="formal-work-years">正式工作年限</Label><Input id="formal-work-years" type="number" min={0} max={60} step={0.5} placeholder="未确认" value={draft.formalWorkYears ?? ''} onChange={(e) => patch({ formalWorkYears: e.target.value === '' ? null : Number(e.target.value) })} /><p className="text-xs text-ink-secondary">填 0 表示明确没有正式工作经历；个人项目和实习不计入。</p></div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>官网岗位排序关注方向</Label>
+            <TagPicker options={['AI 应用开发', 'Agent/RAG', 'FDE/技术交付', '初级后端']} values={draft.rankingFocus ?? ['AI 应用开发', 'Agent/RAG', 'FDE/技术交付', '初级后端']} onChange={(v) => patch({ rankingFocus: v })} />
           </div>
           <div className="space-y-1.5">
             <Label>目标岗位方向</Label>
@@ -407,7 +429,7 @@ function ProfileEditor({ profile }: { profile: CandidateProfile }) {
               onClick={() => doSave(true)}
             >
               <RefreshCw className={cn('size-4', recalcing && 'animate-spin')} />
-              {recalcing ? '正在重新计算…' : '保存并重新计算匹配度'}
+              {recalcing ? '正在刷新资格…' : '保存并刷新资格'}
             </Button>
           </div>
         </div>

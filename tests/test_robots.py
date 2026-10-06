@@ -27,8 +27,10 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, response: FakeResponse) -> None:
         self.response = response
+        self.calls = 0
 
     def get(self, *_args: Any, **_kwargs: Any) -> FakeResponse:
+        self.calls += 1
         return self.response
 
 
@@ -89,3 +91,20 @@ def test_robots_redirect_to_private_network_is_denied() -> None:
 
     with pytest.raises(RobotsDeniedError):
         policy.ensure_allowed("https://example.com/careers")
+
+
+def test_robots_sitemap_declaration_is_reused_without_second_request() -> None:
+    session = FakeSession(
+        FakeResponse(
+            200,
+            "User-agent: *\nAllow: /\nSitemap: https://example.com/careers.xml\n",
+        )
+    )
+    policy = RobotsPolicy(session, _config(), RateLimiter(0, 0), _public_policy())  # type: ignore[arg-type]
+
+    policy.ensure_allowed("https://example.com/")
+
+    assert policy.sitemaps_for("https://example.com/") == (
+        "https://example.com/careers.xml",
+    )
+    assert session.calls == 1

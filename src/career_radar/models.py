@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -109,8 +110,16 @@ class AtsSourceConfig(BaseModel):
     tenant: str | None = None
     # json_feed 专用：接口 URL 与字段映射。
     json_url: str | None = None
+    json_method: Literal["get", "post"] = "get"
+    json_body: dict[str, Any] = Field(default_factory=dict)
     json_items_path: str = "$"
     json_mapping: dict[str, str] = Field(default_factory=dict)
+    json_success_path: str | None = None
+    json_success_value: str | int | None = None
+    json_page_field: str | None = None
+    json_total_path: str | None = None
+    json_max_pages: int = Field(default=10, ge=1, le=100)
+    fallback_apply_url: str | None = Field(default=None, max_length=1000)
     request_timeout_seconds: float = Field(default=30, gt=0, le=300)
     # 拉取后是否用 LLM 评估届别/能力匹配与难度，保证通知链路不变。
     evaluate_with_llm: bool = True
@@ -125,6 +134,22 @@ class AtsSourceConfig(BaseModel):
         if self.type == AtsSourceType.JSON_FEED:
             if not self.json_url or not self.json_url.strip():
                 raise ValueError("json_feed 必须填写 json_url")
+            if (self.json_success_path is None) != (self.json_success_value is None):
+                raise ValueError("json_success_path 和 json_success_value 必须同时填写")
+            if self.json_page_field:
+                if self.json_method != "post":
+                    raise ValueError("json_page_field 目前只支持只读 POST 列表接口")
+                initial_page = self.json_body.get(self.json_page_field)
+                if type(initial_page) is not int or initial_page < 0:
+                    raise ValueError("分页字段必须是 json_body 中的非负整数")
+            if self.json_total_path and not self.json_page_field:
+                raise ValueError("json_total_path 需要同时配置 json_page_field")
+        if self.fallback_apply_url:
+            parsed = urlsplit(self.fallback_apply_url)
+            valid_mail = bool(re.fullmatch(r"mailto:[^\s@?]+@[^\s@?]+\.[^\s@?]+", self.fallback_apply_url))
+            valid_http = parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username
+            if not (valid_mail or valid_http) or any(c.isspace() for c in self.fallback_apply_url):
+                raise ValueError("fallback_apply_url 必须是有效官网 HTTP(S) URL 或 mailto 邮箱")
         return self
 
 
@@ -153,6 +178,11 @@ class CandidateProfile(BaseModel):
     projects: list[str] = Field(default_factory=list)
     internships: list[str] = Field(default_factory=list)
     has_work_experience: bool | None = None
+    student_status: Literal["unknown", "enrolled", "graduated"] = "unknown"
+    graduation_month: str | None = Field(default=None, pattern=r"^20\d{2}-(?:0[1-9]|1[0-2])$")
+    formal_work_years: float | None = Field(default=None, ge=0, le=60)
+    education_mode: Literal["unknown", "full_time", "part_time"] = "unknown"
+    ranking_focus: list[str] = Field(default_factory=lambda: ["AI 应用开发", "Agent/RAG", "FDE/技术交付", "初级后端"])
     target_roles: list[str] = Field(default_factory=list)
     preferred_locations: list[str] = Field(default_factory=list)
     salary_range_k: list[int] = Field(default_factory=lambda: [3, 40], min_length=2, max_length=2)
@@ -184,6 +214,10 @@ class CompanyConfig(BaseModel):
     evidence_urls: list[str] = Field(default_factory=list)
     enabled: bool = True
     discover_from_homepage: bool | Literal["auto"] = "auto"
+    # auto 仅对官网首页发现或公告监控启用；只接收同域 XML 站点地图。
+    discover_from_sitemap: bool | Literal["auto"] = "auto"
+    # 仅在配置的起始招聘页等待此元素出现；避免动态页面的导航文字被当成完整岗位列表。
+    entry_wait_selector: str | None = Field(default=None, min_length=1, max_length=200)
     max_pages: int | None = Field(default=None, ge=1, le=5000)
     recruitment_channel: RecruitmentChannel = RecruitmentChannel.OFFICIAL_CAREERS
     parent_company: str | None = None
@@ -214,6 +248,7 @@ class AppConfig(BaseModel):
     log_dir: Path = Path("logs")
     daily_run_time: str = Field(default="08:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     report_retention_days: int = Field(default=90, ge=7, le=3650)
+    backup_retention_count: int = Field(default=10, ge=1, le=100)
     # 同一公司“换标题重发”的岗位在多少天内合并为一个实体；0 表示关闭。
     semantic_duplicate_window_days: int = Field(default=90, ge=0, le=730)
     output_match_levels: list[MatchLevel] = Field(
@@ -309,7 +344,7 @@ class LLMConfig(BaseModel):
     max_input_chars: int = Field(default=140_000, ge=10_000)
     chunk_overlap_chars: int = Field(default=4_000, ge=0)
     max_retries: int = Field(default=3, ge=1, le=10)
-    # DeepSeek 官方接口支持关闭思考模式；兼容代理不支持该扩展参数时可设为 false。
+    # DeepSeek 与 MiMo 的 Chat Completions 都支持关闭思考模式。
     disable_thinking: bool = True
 
     @model_validator(mode="after")
@@ -498,6 +533,8 @@ class JobPosting(BaseModel):
     jd_complete: bool = True
     jd_incomplete_reason: str | None = None
     source_url: str = ""
+    # ATS 官方 ID（带来源命名空间）；同列表页的不同 ID 不允许模糊合并。
+    source_job_id: str | None = Field(default=None, max_length=500)
     match_level: MatchLevel = MatchLevel.LOW
     match_reason: str = ""
     profile_fit_level: ProfileFitLevel = ProfileFitLevel.UNKNOWN
@@ -552,7 +589,7 @@ class ReputationTopic(BaseModel):
 
 
 class SocialReputationAnalysis(BaseModel):
-    """DeepSeek 对多平台公开评价的谨慎归纳，不代表事实认定。"""
+    """LLM 对多平台公开评价的谨慎归纳，不代表事实认定。"""
 
     model_config = ConfigDict(extra="forbid")
 

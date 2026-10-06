@@ -11,52 +11,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { EmptyState, ErrorState, ListSkeleton } from '@/components/common/StateViews'
 import { SourceNote } from '@/components/jobs/SourceNote'
+import { GrowthTargetButton } from '@/components/GrowthSummary'
 
-type Category = 'priority' | 'review' | 'lower' | 'excluded'
+import { useQueryClient } from '@tanstack/react-query'
+import { useNavigate, useSearchParams } from 'react-router'
+import { safeJobsReturn } from '@/lib/browserState'
+import { usePlatformLeads } from '@/hooks/usePlatformLeads'
+import { useUrlSearch, useListScroll } from '@/hooks/useBrowserState'
+import { getPlatformLeads, PLATFORM_LEADS_KEY } from '@/services/platformLeads'
+import type { PlatformLead, Category } from '@/services/platformLeads'
 type StateField = 'favorite' | 'applied' | 'hidden'
-
-interface AIScreenResult {
-  eligibility: 'eligible' | 'ineligible' | 'unknown'
-  fit: 'strong' | 'reasonable' | 'weak' | 'unknown'
-  action: 'prioritize' | 'consider' | 'defer'
-  confidence: 'high' | 'medium' | 'low'
-  summary: string
-  eligibility_checks: {
-    requirement: string
-    verdict: 'met' | 'unmet' | 'unknown'
-    job_quote: string
-    candidate_quote: string
-  }[]
-  matched_evidence: string[]
-  gaps: string[]
-  next_step: string
-}
-
-interface PlatformLead {
-  id: string
-  title: string
-  company: string
-  location: string
-  salary: string
-  tags: string
-  description: string
-  source_url: string
-  jdComplete: boolean
-  companyIdentified: boolean
-  aiScreenable: boolean
-  firstSeenAt: string
-  lastSeenAt: string
-  isFavorite: boolean
-  isApplied: boolean
-  isHidden: boolean
-  score: number
-  category: Category
-  reasons: string[]
-  blockers: string[]
-  aiResult: AIScreenResult | null
-  aiCheckedAt: string | null
-  aiNeedsRefresh: boolean
-}
 
 interface ImportPreview {
   total: number
@@ -126,16 +90,24 @@ function localDate(value: string): string {
 }
 
 export default function PlatformLeadsPage({ embedded = false, focusLeadId = null }: { embedded?: boolean; focusLeadId?: string | null }) {
-  const [leads, setLeads] = useState<PlatformLead[]>([])
+  const client = useQueryClient()
+  const leadQuery = usePlatformLeads()
+  const leads = useMemo(() => leadQuery.data ?? [], [leadQuery.data])
+  const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const search = useUrlSearch()
+  const keyword = params.get('q') ?? ''
+  const categoryParam = params.get('category')
+  const category = ['priority', 'review', 'lower', 'excluded'].includes(categoryParam ?? '') ? categoryParam as Category : 'all'
+  const includeHandled = params.get('handled') === '1'
+  const setCategory = useCallback((value: Category | 'all') => { setParams(old => { const next = new URLSearchParams(old); next.set('category', value); return next }) }, [setParams])
+  useListScroll(!leadQuery.isPending)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [content, setContent] = useState('')
   const [filename, setFilename] = useState('')
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [busy, setBusy] = useState(false)
-  const [category, setCategory] = useState<Category | 'all'>('all')
-  const [keyword, setKeyword] = useState('')
-  const [includeHandled, setIncludeHandled] = useState(false)
   const [preferences, setPreferences] = useState<BossPreferences | null>(null)
   const [preferencesBusy, setPreferencesBusy] = useState(false)
   const [workingId, setWorkingId] = useState<string | null>(null)
@@ -160,11 +132,10 @@ export default function PlatformLeadsPage({ embedded = false, focusLeadId = null
     }
     if (!silent) setLoading(true)
     try {
-      const [items, currentPreferences] = await Promise.all([
-        apiRequest<PlatformLead[]>('/platform-leads'),
+      const [, currentPreferences] = await Promise.all([
+        client.fetchQuery({ queryKey: PLATFORM_LEADS_KEY, queryFn: getPlatformLeads, staleTime: 0 }),
         apiRequest<BossPreferences>('/platform-leads/preferences'),
       ])
-      setLeads(items)
       setPreferences(currentPreferences)
       setError('')
     } catch (cause) {
@@ -172,7 +143,7 @@ export default function PlatformLeadsPage({ embedded = false, focusLeadId = null
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [])
+  }, [client])
 
   useEffect(() => { void load() }, [load])
   useEffect(() => () => { stopAfterCurrent.current = true }, [])
@@ -206,26 +177,22 @@ export default function PlatformLeadsPage({ embedded = false, focusLeadId = null
       }).catch(() => undefined)
     }, 3000)
     return () => window.clearInterval(timer)
-  }, [crawlStatus?.state, load])
+  }, [crawlStatus?.state, load, setCategory])
   useEffect(() => {
-    if (!focusLeadId || focusedOnce.current === focusLeadId || leads.length === 0) return
-    const focused = leads.find((lead) => lead.id === focusLeadId)
-    if (focused) {
-      focusedOnce.current = focusLeadId
-      setCategory(focused.category)
-      setIncludeHandled(true)
-      setKeyword(focused.title)
-    }
+    if (!focusLeadId || focusedOnce.current === focusLeadId || !leads.some(lead => lead.id === focusLeadId)) return
+    focusedOnce.current = focusLeadId
+    requestAnimationFrame(() => document.getElementById(`lead-${focusLeadId}`)?.scrollIntoView({ block: 'start' }))
   }, [focusLeadId, leads])
 
   const visible = useMemo(() => leads.filter((lead) => {
+    if (lead.id === focusLeadId) return true
     if (category === 'all' && lead.category === 'excluded') return false
     if (category !== 'all' && lead.category !== category) return false
     if (!includeHandled && (lead.isHidden || lead.isApplied)) return false
     const query = keyword.trim().toLocaleLowerCase()
     if (query && !`${lead.title} ${lead.company} ${lead.description}`.toLocaleLowerCase().includes(query)) return false
     return true
-  }), [leads, category, keyword, includeHandled])
+  }), [leads, category, keyword, includeHandled, focusLeadId])
 
   const counts = useMemo(() => Object.fromEntries(
     CATEGORIES.map((item) => [item.value, leads.filter((lead) =>
@@ -537,29 +504,31 @@ export default function PlatformLeadsPage({ embedded = false, focusLeadId = null
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Input
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
+            {...search.bind}
+            aria-label="搜索 BOSS 岗位"
             placeholder="搜索岗位、公司或 JD"
             className="max-w-md"
           />
           <label className="flex items-center gap-2 text-sm text-ink-secondary">
-            <input type="checkbox" checked={includeHandled} onChange={(event) => setIncludeHandled(event.target.checked)} />
+            <input type="checkbox" checked={includeHandled} onChange={(event) => setParams(old => { const next = new URLSearchParams(old); next.set('handled', event.target.checked ? '1' : '0'); return next })} />
             显示已投递和已隐藏
           </label>
         </div>
       </section>
 
-      {loading ? <ListSkeleton card /> : error ? <ErrorState description={error} onRetry={() => { void load() }} /> : visible.length === 0 ? (
+      {error && leads.length > 0 && <p role="status" className="text-sm text-danger">刷新失败，保留上次结果。<Button variant="ghost" onClick={() => { void load(true) }}>重试</Button></p>}
+      {loading && !leadQuery.data ? <ListSkeleton card /> : error && !leadQuery.data ? <ErrorState description={error} onRetry={() => { void load() }} /> : visible.length === 0 ? (
         <EmptyState title={leads.length ? '当前筛选下没有机会' : '还没有导入 BOSS 职位'}
           description={leads.length ? '切换分组、显示已处理岗位或换个关键词。' : '点击“获取岗位”按简历抓取，或导入已有 JSON。'} />
       ) : (
         <div className="space-y-3">
           {visible.map((lead) => (
-            <Card key={lead.id} className="gap-3 p-5">
+            <Card key={lead.id} className="gap-3 p-5"><div id={`lead-${lead.id}`} className="scroll-mt-24" />{focusLeadId === lead.id && <Button variant="ghost" className="mb-3" onClick={() => { if (params.has('from')) navigate(safeJobsReturn(params.get('from'))); else setParams(old => { const next = new URLSearchParams(old); next.delete('lead'); return next }) }}>关闭选中详情，返回列表</Button>}
               <div className="flex flex-wrap items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-base font-semibold text-ink">{lead.title}</h2>
+                    <GrowthTargetButton source="boss" id={lead.id} disabled={!lead.jdComplete} />
                     <Badge variant={lead.category === 'excluded' ? 'destructive' : 'secondary'}>{CATEGORY_LABEL[lead.category]}</Badge>
                     {!lead.jdComplete && <Badge variant="outline">JD 待确认</Badge>}
                     {!lead.companyIdentified && <Badge variant="outline">招聘方待核对</Badge>}
@@ -590,7 +559,7 @@ export default function PlatformLeadsPage({ embedded = false, focusLeadId = null
               {lead.description && (
                 <details className="rounded-lg bg-surface-subtle p-3 text-sm">
                   <summary className="cursor-pointer font-medium">查看完整 JD</summary>
-                  <pre className="mt-3 whitespace-pre-wrap break-words font-sans leading-6">{lead.description}</pre>
+                  <pre className="mt-3 whitespace-pre-wrap break-words font-sans reading-copy">{lead.description}</pre>
                 </details>
               )}
               {lead.aiResult ? (
@@ -603,7 +572,7 @@ export default function PlatformLeadsPage({ embedded = false, focusLeadId = null
                       AI 分析于 {lead.aiCheckedAt ? localDate(lead.aiCheckedAt) : '最近'} · 非录用保证
                     </span>
                   </div>
-                  <p className="leading-6 text-ink">{lead.aiResult.summary}</p>
+                  <details><summary className="cursor-pointer text-ink">画像匹配判断 · 查看分析</summary><p className="mt-2 reading-copy text-ink">{lead.aiResult.summary}</p></details>
                   {lead.aiResult.eligibility_checks.length > 0 && (
                     <details>
                       <summary className="cursor-pointer text-xs font-medium text-brand-foreground">查看资格判断依据</summary>

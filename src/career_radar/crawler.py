@@ -10,13 +10,14 @@ import urllib.robotparser
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
+from trafilatura.sitemaps import extract_robots_sitemaps
 
 from .models import CrawlerConfig
 from .network_policy import PublicTargetPolicy, UnsafeTargetError
-from .url_utils import canonicalize_url, normalize_request_url, origin_of
+from .url_utils import canonicalize_url, is_spa_route, normalize_request_url, origin_of
 
 LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class RateLimiter:
 class _RobotsEntry:
     parser: urllib.robotparser.RobotFileParser | None
     deny_all: bool = False
+    sitemaps: tuple[str, ...] = ()
 
 
 class RobotsPolicy:
@@ -140,7 +142,10 @@ class RobotsPolicy:
                     parser = urllib.robotparser.RobotFileParser()
                     parser.set_url(current)
                     parser.parse(response.text.splitlines())
-                    entry = _RobotsEntry(parser=parser)
+                    entry = _RobotsEntry(
+                        parser=parser,
+                        sitemaps=tuple(extract_robots_sitemaps(response.text, origin)),
+                    )
                 elif response.status_code in {401, 403} or response.status_code >= 500:
                     # 认证拒绝或服务端暂时不可达时不冒险抓取。
                     entry = _RobotsEntry(parser=None, deny_all=True)
@@ -153,6 +158,12 @@ class RobotsPolicy:
                     close()
         self._cache[origin] = entry
         return entry
+
+    def sitemaps_for(self, url: str) -> tuple[str, ...]:
+        """复用已缓存的 robots 声明；规则不可确认时不扩展站点地图。"""
+
+        entry = self._load(url)
+        return () if entry.deny_all else entry.sitemaps
 
     def ensure_allowed(self, url: str) -> None:
         """禁止时抛出专门异常，便于日报清楚说明跳过原因。"""
@@ -216,7 +227,7 @@ class _PlaywrightRenderer:
             return
         route.continue_()
 
-    def render(self, url: str) -> tuple[str, str]:
+    def render(self, url: str, *, wait_selector: str | None = None) -> tuple[str, str]:
         """渲染公开页面，不填写表单、不点击登录，也不保存 Cookie。"""
 
         try:
@@ -233,6 +244,12 @@ class _PlaywrightRenderer:
                 wait_until="domcontentloaded",
                 timeout=int(self.config.playwright_timeout_seconds * 1000),
             )
+            if wait_selector:
+                page.wait_for_selector(
+                    wait_selector,
+                    state="visible",
+                    timeout=int(self.config.playwright_timeout_seconds * 1000),
+                )
             if self.config.playwright_wait_after_load_ms:
                 page.wait_for_timeout(self.config.playwright_wait_after_load_ms)
             return page.content(), page.url
@@ -323,11 +340,16 @@ class PageFetcher:
         self,
         url: str,
         conditional_headers: Mapping[str, str] | None = None,
+        *,
+        sitemap: bool = False,
     ) -> FetchedPage:
         """手动处理重定向，以便每个新目标在请求前都经过 robots 检查。"""
 
         current = canonicalize_url(url)
+        original_host = urlsplit(current).hostname if sitemap else None
         for _redirect in range(6):
+            if original_host and urlsplit(current).hostname != original_host:
+                raise CrawlError(f"站点地图重定向到站外：{current}")
             self.robots.ensure_allowed(current)
             self.limiter.wait(current)
             try:
@@ -338,7 +360,7 @@ class PageFetcher:
                     stream=True,
                     headers=(
                         dict(conditional_headers)
-                        if _redirect == 0
+                        if _redirect == 0 and conditional_headers is not None
                         else None
                     ),
                 )
@@ -366,10 +388,14 @@ class PageFetcher:
                 if response.status_code >= 400:
                     raise CrawlError(f"HTTP {response.status_code}：{current}")
                 content_type = response.headers.get("Content-Type", "").casefold()
-                if content_type and not any(
-                    kind in content_type for kind in ("text/html", "application/xhtml+xml")
-                ):
-                    raise CrawlError(f"不是 HTML 页面（{content_type}）：{current}")
+                accepted_types = (
+                    ("application/xml", "text/xml", "application/rss+xml", "text/plain")
+                    if sitemap
+                    else ("text/html", "application/xhtml+xml")
+                )
+                if content_type and not any(kind in content_type for kind in accepted_types):
+                    label = "XML 站点地图" if sitemap else "HTML 页面"
+                    raise CrawlError(f"不是{label}（{content_type}）：{current}")
 
                 chunks: list[bytes] = []
                 total = 0
@@ -392,6 +418,11 @@ class PageFetcher:
                 )
         raise CrawlError(f"重定向次数过多：{url}")
 
+    def fetch_sitemap(self, url: str) -> FetchedPage:
+        """经同一 robots、限速和响应大小保护读取 XML，不触发浏览器渲染。"""
+
+        return self._static_fetch(url, sitemap=True)
+
     def _static_text_length(self, html: str) -> int:
         """计算静态 HTML 的可见正文长度，供渲染判断和失败回退共同使用。"""
 
@@ -413,6 +444,8 @@ class PageFetcher:
         self,
         url: str,
         conditional_headers: Mapping[str, str] | None = None,
+        *,
+        wait_selector: str | None = None,
     ) -> FetchedPage:
         """抓取一个页面；Playwright 失败时保留可用的静态 HTML。"""
 
@@ -423,13 +456,26 @@ class PageFetcher:
         )
         if static_page.not_modified:
             return static_page
+        if wait_selector and self.config.render_mode == "never":
+            raise CrawlError("已配置动态招聘入口等待元素，但 Playwright 渲染已关闭")
         should_render = self.config.render_mode == "always" or (
-            self.config.render_mode == "auto" and self._looks_like_js_shell(static_page.html)
+            self.config.render_mode == "auto"
+            and (
+                bool(wait_selector)
+                or
+                is_spa_route(static_page.final_url)
+                or self._looks_like_js_shell(static_page.html)
+            )
         )
         if not should_render:
             return static_page
         try:
-            html, final_url = self.renderer.render(static_page.final_url)
+            if wait_selector:
+                html, final_url = self.renderer.render(
+                    static_page.final_url, wait_selector=wait_selector
+                )
+            else:
+                html, final_url = self.renderer.render(static_page.final_url)
             final_url = canonicalize_url(final_url)
             self.robots.ensure_allowed(final_url)
             return FetchedPage(
@@ -442,7 +488,7 @@ class PageFetcher:
                 last_modified=static_page.last_modified,
             )
         except CrawlError as exc:
-            if self.config.render_mode == "always":
+            if self.config.render_mode == "always" or wait_selector:
                 raise
             static_length = self._static_text_length(static_page.html)
             if static_length < self.config.min_static_text_chars:

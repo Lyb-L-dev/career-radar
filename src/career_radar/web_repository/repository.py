@@ -6,6 +6,7 @@ from .base import BaseWebRepository
 from .candidates import CandidatesMixin
 from .companies import CompaniesMixin
 from .jobs import JobsMixin
+from .reports import ReportsMixin
 from .reputation import ReputationMixin
 from .runs import RunsMixin
 from .wechat import WechatMixin
@@ -18,6 +19,7 @@ class WebRepository(
     CandidatesMixin,
     WechatMixin,
     ReputationMixin,
+    ReportsMixin,
     RunsMixin,
 ):
     """围绕单个 config.yaml 的只读业务查询与少量 Web 状态写入。"""

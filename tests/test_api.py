@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -91,6 +92,255 @@ def _client(tmp_path: Path) -> tuple[TestClient, Path]:
     config_path.write_text(_config(), encoding="utf-8")
     app = create_app(config_path, web_dist=tmp_path / "missing-dist")
     return TestClient(app), config_path
+
+
+def test_maintenance_export_creates_private_backup_without_exposing_secrets(
+    tmp_path: Path,
+) -> None:
+    client, config_path = _client(tmp_path)
+    settings = load_settings(config_path)
+    secret = "deepseek-test-secret-must-not-leak"
+    private_profile = "private-profile-content-must-not-leak"
+
+    (tmp_path / ".env").write_text(
+        f"DEEPSEEK_API_KEY={secret}\n",
+        encoding="utf-8",
+    )
+    settings.app.output_dir.mkdir(parents=True, exist_ok=True)
+    (settings.app.output_dir / "2026-08-10-jobs.md").write_text(
+        "测试日报",
+        encoding="utf-8",
+    )
+    (settings.app.output_dir / ".env").write_text(
+        f"DEEPSEEK_API_KEY={secret}\n",
+        encoding="utf-8",
+    )
+    settings.app.log_dir.mkdir(parents=True, exist_ok=True)
+    (settings.app.log_dir / "career-radar.log").write_text(
+        "测试日志",
+        encoding="utf-8",
+    )
+    settings.application.profile_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.application.profile_path.write_text(private_profile, encoding="utf-8")
+    application_dir = settings.application.output_dir / "app-test"
+    application_dir.mkdir(parents=True, exist_ok=True)
+    (application_dir / "resume.docx").write_bytes(b"test resume")
+
+    response = client.post("/api/settings/maintenance/export")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["backupName"].endswith(".zip")
+    assert Path(payload["backupName"]).name == payload["backupName"]
+    assert payload["includedFiles"] >= 5
+    assert payload["sizeBytes"] > 0
+    response_text = response.text
+    assert str(tmp_path) not in response_text
+    assert secret not in response_text
+    assert private_profile not in response_text
+
+    backup_path = tmp_path / "private" / "backups" / payload["backupName"]
+    assert backup_path.is_file()
+    with zipfile.ZipFile(backup_path) as archive:
+        names = set(archive.namelist())
+        assert "config/config.yaml" in names
+        assert "data/test.db" in names
+        assert "output/2026-08-10-jobs.md" in names
+        assert "logs/career-radar.log" in names
+        assert "private/application_profile.yaml" in names
+        assert "private/application_outputs/app-test/resume.docx" in names
+        assert "manifest.json" in names
+        assert all(".env" not in name for name in names)
+        assert all("backups/" not in name for name in names)
+        manifest = json.loads(archive.read("manifest.json"))
+        assert ".env" in manifest["excluded"]
+        assert manifest["databaseEntry"] == "data/test.db"
+        assert set(manifest["sha256"]) == set(manifest["included"])
+
+    listing = client.get("/api/settings/backups")
+    verification = client.post(
+        f"/api/settings/backups/{payload['backupName']}/verify"
+    )
+    serialized = json.dumps(listing.json(), ensure_ascii=False)
+    assert listing.status_code == 200
+    assert listing.json()[0]["name"] == payload["backupName"]
+    assert listing.json()[0]["integrityStatus"] == "unchecked"
+    assert str(tmp_path) not in serialized
+    assert private_profile not in serialized
+    assert verification.status_code == 200
+    assert verification.json()["integrityStatus"] == "valid"
+    assert verification.json()["databaseIntegrity"] == "ok"
+    assert str(tmp_path) not in verification.text
+
+
+def test_backup_retention_invalid_archive_and_confirmed_delete(tmp_path: Path) -> None:
+    client, config_path = _client(tmp_path)
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw["app"]["backup_retention_count"] = 2
+    config_path.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    created = [client.post("/api/settings/maintenance/export").json() for _ in range(3)]
+    backups = client.get("/api/settings/backups").json()
+
+    assert created[-1]["prunedBackups"] == 1
+    assert len(backups) == 2
+    assert created[0]["backupName"] not in {item["name"] for item in backups}
+
+    invalid_name = "career-radar-backup-20260810-120000-000000.zip"
+    invalid_path = tmp_path / "private" / "backups" / invalid_name
+    invalid_path.write_bytes(b"not a zip")
+    private_marker = "private-content-must-not-appear"
+    tampered_name = "career-radar-backup-20260810-120001-000000.zip"
+    with zipfile.ZipFile(invalid_path.parent / tampered_name, "w") as archive:
+        archive.writestr("manifest.json", json.dumps({"createdAt": private_marker}))
+    invalid_listing = client.get("/api/settings/backups").json()
+    invalid_verification = client.post(
+        f"/api/settings/backups/{invalid_name}/verify"
+    )
+    rejected = client.request(
+        "DELETE",
+        f"/api/settings/backups/{created[-1]['backupName']}",
+        json={"confirmed": False},
+    )
+    deleted = client.request(
+        "DELETE",
+        f"/api/settings/backups/{created[-1]['backupName']}",
+        json={"confirmed": True},
+    )
+    missing = client.post("/api/settings/backups/not-a-backup.zip/verify")
+
+    assert next(item for item in invalid_listing if item["name"] == invalid_name)[
+        "integrityStatus"
+    ] == "invalid"
+    assert private_marker not in json.dumps(invalid_listing, ensure_ascii=False)
+    assert invalid_verification.status_code == 200
+    assert invalid_verification.json()["integrityStatus"] == "invalid"
+    assert rejected.status_code == 428
+    assert deleted.status_code == 200
+    assert not (tmp_path / "private" / "backups" / created[-1]["backupName"]).exists()
+    assert missing.status_code == 422
+
+
+def test_maintenance_clean_reports_respects_retention_and_unrelated_files(
+    tmp_path: Path,
+) -> None:
+    client, config_path = _client(tmp_path)
+    output_dir = load_settings(config_path).app.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    old_markdown = output_dir / "2020-01-01-jobs.md"
+    old_csv = output_dir / "2020-01-01-jobs.csv"
+    current_report = output_dir / "2099-01-01-jobs.md"
+    unrelated = output_dir / "notes.txt"
+    for path in (old_markdown, old_csv, current_report, unrelated):
+        path.write_text("test", encoding="utf-8")
+
+    response = client.post("/api/settings/maintenance/cleanReports")
+
+    assert response.status_code == 200
+    assert response.json()["removed"] == 2
+    assert not old_markdown.exists()
+    assert not old_csv.exists()
+    assert current_report.is_file()
+    assert unrelated.is_file()
+
+
+def test_unknown_maintenance_action_returns_not_found(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+
+    response = client.post("/api/settings/maintenance/not-supported")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "未知维护操作"
+
+
+def test_historical_report_email_requires_confirmation_and_records_success(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, config_path = _client(tmp_path)
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw["smtp"] = {
+        "enabled": True,
+        "host": "smtp.example.com",
+        "username": "sender@example.com",
+        "from_address": "sender@example.com",
+        "to_addresses": ["recipient@example.com"],
+    }
+    config_path.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    settings = load_settings(config_path)
+    storage = JobStorage(settings.app.database_path)
+    storage.initialize()
+    storage.store_jobs([_job()], "2026-08-10T08:00:00+08:00")
+    sent: list[tuple[list, str]] = []
+    monkeypatch.setattr(
+        "career_radar.report_delivery.send_job_email",
+        lambda _config, events, date_text: sent.append((events, date_text)),
+    )
+
+    rejected = client.post(
+        "/api/reports/2026-08-10/resend",
+        json={"confirmed": False},
+    )
+    confirmed = client.post(
+        "/api/reports/2026-08-10/resend",
+        json={"confirmed": True},
+    )
+    reports = client.get("/api/reports").json()
+
+    assert rejected.status_code == 428
+    assert confirmed.status_code == 200
+    assert confirmed.json()["eventCount"] == 1
+    assert "recipient@example.com" not in confirmed.text
+    assert len(sent) == 1
+    assert sent[0][1] == "2026-08-10"
+    assert next(report for report in reports if report["date"] == "2026-08-10")[
+        "emailStatus"
+    ] == "sent"
+
+
+def test_reports_use_exact_historical_versions_without_loading_current_job_list(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, config_path = _client(tmp_path)
+    storage = JobStorage(load_settings(config_path).app.database_path)
+    first = _job()
+    event = storage.store_jobs([first], "2026-08-01T08:00:00+08:00")[0]
+    changed = first.model_copy(
+        update={
+            "description": f"{first.description}\n第二天职责更新",
+            "profile_fit_level": ProfileFitLevel.LOW,
+        }
+    )
+    storage.store_jobs([changed], "2026-08-02T08:00:00+08:00")
+    monkeypatch.setattr(
+        client.app.state.repository,
+        "list_jobs",
+        lambda: (_ for _ in ()).throw(AssertionError("日报不应加载当前岗位全集")),
+    )
+    monkeypatch.setattr(
+        client.app.state.repository,
+        "list_runs",
+        lambda: (_ for _ in ()).throw(AssertionError("日报不应加载全部运行详情")),
+    )
+
+    with client:
+        reports = client.get("/api/reports")
+
+    assert reports.status_code == 200
+    by_date = {item["date"]: item for item in reports.json()}
+    assert by_date["2026-08-01"]["newJobs"] == 1
+    assert by_date["2026-08-01"]["highMatchJobs"] == 1
+    assert by_date["2026-08-01"]["newJobIds"] == [event.entity_key]
+    assert by_date["2026-08-02"]["updatedJobs"] == 1
+    assert by_date["2026-08-02"]["highMatchJobs"] == 0
 
 
 def _write_application_profile(config_path: Path) -> None:
@@ -251,7 +501,10 @@ def test_llm_connection_test_requires_explicit_paid_call_confirmation(
             calls.append(prompt)
             return object()
 
-    monkeypatch.setattr("career_radar.api.create_provider", lambda _config: FakeProvider())
+    monkeypatch.setattr(
+        "career_radar.api_settings.create_provider",
+        lambda _config: FakeProvider(),
+    )
 
     with client:
         preflight = client.get("/api/settings/test-llm/preflight")
@@ -295,6 +548,57 @@ def test_settings_reject_absolute_paths_without_changing_config(tmp_path: Path) 
     assert response.status_code == 422
     assert "相对路径" in response.json()["detail"]
     assert config_path.read_bytes() == before
+
+
+def test_settings_reject_unsupported_llm_provider(tmp_path: Path) -> None:
+    client, config_path = _client(tmp_path)
+    before = config_path.read_bytes()
+
+    with client:
+        payload = client.get("/api/settings").json()
+        payload["llm"]["provider"] = "LiteLLM"
+        response = client.put("/api/settings", json=payload)
+
+    assert response.status_code == 422
+    assert config_path.read_bytes() == before
+
+
+def test_settings_save_and_test_mimo_without_exposing_key(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("XIAOMIMIMO_API_KEY", "mimo-test-secret-not-for-response")
+    client, config_path = _client(tmp_path)
+    calls: list[str] = []
+
+    class FakeProvider:
+        def analyze(self, prompt: str):
+            calls.append(prompt)
+            return object()
+
+    monkeypatch.setattr(
+        "career_radar.api_settings.create_provider", lambda _config: FakeProvider()
+    )
+    with client:
+        payload = client.get("/api/settings").json()
+        payload["llm"].update({
+            "provider": "MiMo",
+            "model": "mimo-v2.6-pro",
+            "apiBaseUrl": "https://api.xiaomimimo.com/v1",
+        })
+        saved = client.put("/api/settings", json=payload)
+        shown = client.get("/api/settings")
+        preflight = client.get("/api/settings/test-llm/preflight")
+        test_call = client.post("/api/settings/test-llm", json={"confirmed": True})
+
+    assert saved.status_code == 200
+    assert shown.json()["llm"]["provider"] == "MiMo"
+    assert shown.json()["llm"]["apiKeyConfigured"] is True
+    assert "mimo-test-secret-not-for-response" not in shown.text
+    assert preflight.json()["provider"] == "MiMo"
+    assert test_call.status_code == 200
+    assert len(calls) == 1
+    assert "provider: mimo" in config_path.read_text(encoding="utf-8")
 
 
 def test_settings_mask_and_preserve_existing_external_path(tmp_path: Path) -> None:
@@ -499,6 +803,32 @@ def test_default_cors_origins_allow_local_frontend(tmp_path: Path) -> None:
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:7100"
 
 
+def test_local_request_guard_rejects_remote_host_and_cross_site_writes(
+    tmp_path: Path,
+) -> None:
+    client, _config_path = _client(tmp_path)
+
+    with client:
+        remote_host = client.get(
+            "/api/health",
+            headers={"Host": "career-radar.example.com"},
+        )
+        cross_site = client.post(
+            "/api/settings/maintenance/not-supported",
+            headers={"Origin": "https://malicious.example.com"},
+        )
+        allowed_frontend = client.post(
+            "/api/settings/maintenance/not-supported",
+            headers={"Origin": "http://127.0.0.1:7100"},
+        )
+
+    assert remote_host.status_code == 400
+    assert remote_host.json()["detail"] == "本地管理端只接受来自本机地址的请求"
+    assert cross_site.status_code == 403
+    assert cross_site.json()["detail"] == "已拒绝非本地页面发起的写操作"
+    assert allowed_frontend.status_code == 404
+
+
 def test_existing_cli_events_are_imported_as_honest_run_summary(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(_config(), encoding="utf-8")
@@ -601,6 +931,36 @@ def test_company_csv_import_with_invalid_row_writes_nothing(tmp_path: Path) -> N
     assert preview.json()["canCommit"] is False
     assert commit.status_code == 422
     assert config_path.read_bytes() == before
+
+
+def test_core_route_modules_preserve_public_api_contract(tmp_path: Path) -> None:
+    client, _config_path = _client(tmp_path)
+
+    schema = client.app.openapi()
+    expected_methods = {
+        "/api/health": {"get"},
+        "/api/dashboard": {"get"},
+        "/api/search": {"get"},
+        "/api/profile": {"get", "put"},
+        "/api/profile/recalculate": {"post"},
+        "/api/settings": {"get", "put"},
+        "/api/settings/test-llm/preflight": {"get"},
+        "/api/settings/test-llm": {"post"},
+        "/api/settings/test-email": {"post"},
+        "/api/settings/test-apprise": {"post"},
+        "/api/settings/db-stats": {"get"},
+        "/api/settings/backups": {"get"},
+        "/api/settings/backups/{backup_name}/verify": {"post"},
+        "/api/settings/backups/{backup_name}": {"delete"},
+        "/api/settings/maintenance/{action}": {"post"},
+        "/api/reports": {"get"},
+        "/api/reports/{date}": {"get"},
+        "/api/reports/{date}/download/{format_name}": {"get"},
+        "/api/reports/{date}/resend": {"post"},
+    }
+    for path, methods in expected_methods.items():
+        assert path in schema["paths"]
+        assert methods <= set(schema["paths"][path])
 
 
 def test_company_route_modules_preserve_public_api_contract(tmp_path: Path) -> None:
@@ -1077,6 +1437,50 @@ def test_application_list_and_artifact_download_are_private_and_integrity_checke
             f"/api/applications/{run.id}/artifacts/resume_docx"
         )
     assert tampered.status_code == 409
+
+
+def test_formpilot_export_requires_ready_task_and_explicit_local_post(tmp_path: Path) -> None:
+    client, config_path = _client(tmp_path)
+    _write_application_profile(config_path)
+    settings = load_settings(config_path)
+    storage = JobStorage(settings.app.database_path)
+    event = storage.store_jobs([_job()], "2026-07-22T08:00:00+08:00")[0]
+    repository = ApplicationRepository(settings.app.database_path)
+    service = ApplicationService(repository, settings.application, settings.app.timezone)
+    run = service.create(event.entity_key)
+    path = f"/api/applications/{run.id}/formpilot-profile"
+
+    with client:
+        premature = client.post(path)
+        wrong_origin = client.post(path, headers={"Origin": "https://foreign.example"})
+    assert premature.status_code == 409
+    assert wrong_origin.status_code == 403
+
+    for status in (
+        ApplicationStatus.EVALUATING,
+        ApplicationStatus.WAITING_FOR_APPROVAL,
+        ApplicationStatus.DRAFTING,
+        ApplicationStatus.FACTUAL_REVIEW,
+        ApplicationStatus.RECRUITER_REVIEW,
+        ApplicationStatus.REVISING,
+        ApplicationStatus.RENDERING,
+        ApplicationStatus.VERIFYING,
+        ApplicationStatus.READY,
+    ):
+        service.transition(run.id, status)
+
+    with client:
+        exported = client.post(path)
+        ordinary_detail = client.get(f"/api/applications/{run.id}")
+        listing = client.get("/api/applications")
+
+    assert exported.status_code == 200
+    assert exported.headers["cache-control"] == "no-store"
+    assert "attachment" in exported.headers["content-disposition"]
+    assert exported.json()["basic"]["email"] == "private-candidate@example.com"
+    assert exported.json()["education"][0]["school"] == "测试大学"
+    assert "private-candidate@example.com" not in ordinary_detail.text
+    assert "private-candidate@example.com" not in listing.text
 
 
 def test_application_manager_marks_interrupted_stage_as_resumable_after_restart(

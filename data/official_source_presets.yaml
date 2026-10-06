@@ -1,0 +1,67 @@
+# 公开来源预设。只有核验后才加入本机 config.yaml；不随仓库自动开始扫描。
+# 来源证据及适用范围：research/official-coverage-2026-10-04.md
+companies:
+  - name: Dify
+    url: https://join.dify.ai/roles.html
+    company_type: private
+    industry_category: ai_data
+    monitor_mode: jobs
+    enabled: true
+    discover_from_homepage: false
+    discover_from_sitemap: false
+    recruitment_channel: official_careers
+    evidence_urls: [https://dify.ai/zh, https://join.dify.ai/roles.html]
+    notes: 官网链接及公开 JSON 已核验。实习岗位含在读/英语等要求；采集不代表符合资格。
+    ats_source:
+      type: json_feed
+      json_url: https://qcnurokxgtyuimuixztr.supabase.co/functions/v1/public-jobs?lang=en
+      json_items_path: jobs
+      json_mapping:
+        source_id: id
+        title: title
+        description: content
+        location: work_site,location
+        recruitment_type: employment_type
+        published_at: created_at
+      fallback_apply_url: mailto:joinus@dify.ai
+      evaluate_with_llm: false
+
+  - name: 合合信息
+    url: https://intsig.zhiye.com/jobs
+    company_type: private
+    industry_category: ai_data
+    monitor_mode: jobs
+    enabled: true
+    discover_from_homepage: false
+    discover_from_sitemap: false
+    recruitment_channel: official_careers
+    evidence_urls: [https://www.intsig.com/join]
+    notes: 官网指向北森招聘门户。仅采集校招/实习；多数校招标题为27届，需逐岗位核对届别。
+    ats_source:
+      type: json_feed
+      json_url: https://intsig.zhiye.com/api/JobAd/GetJobAdPageList
+      json_method: post
+      json_body:
+        Category: ['2', '3']
+        PageIndex: 0
+        PageSize: 50
+        KeyWords: ''
+        SpecialType: 0
+        PortalId: 64e4a5e2-a864-4c40-9cfb-6c2123f722dc
+        DisplayFields: [Category]
+      json_items_path: Data
+      json_success_path: Code
+      json_success_value: 200
+      json_page_field: PageIndex
+      json_total_path: Count
+      json_max_pages: 10
+      json_mapping:
+        source_id: JobAdId
+        title: JobAdName
+        description: Duty
+        requirements: Require
+        location: LocNames
+        published_at: PostDate
+        recruitment_type: Category
+      fallback_apply_url: https://intsig.zhiye.com/home
+      evaluate_with_llm: false

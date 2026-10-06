@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Job, JobFilter } from '@/types'
-import { matchFilter } from './jobs'
+import { getJobs, matchFilter } from './jobs'
+
+afterEach(() => vi.restoreAllMocks())
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -58,6 +60,28 @@ function filter(overrides: Partial<JobFilter> = {}): JobFilter {
   return { tab: 'all', ...overrides }
 }
 
+it('preserves uncertain qualifications but excludes explicit conflicts from recommendations', () => {
+  const ineligible = makeJob({ eligibility: { verdict: 'ineligible', summary: '2027届不符', checks: [], checked_at: '2026-10-05' }, priority: { tier: 'defer', score: 0, label: '暂缓' } })
+  const review = makeJob({ eligibility: { verdict: 'review', summary: '在读状态未确认', checks: [], checked_at: '2026-10-05' }, priority: { tier: 'verify', score: 80, label: '先核对' } })
+  expect(matchFilter(ineligible, filter({ tab: 'recommended' }))).toBe(false)
+  expect(matchFilter(ineligible, filter({ eligibility: 'available' }))).toBe(false)
+  expect(matchFilter(review, filter({ eligibility: 'available' }))).toBe(true)
+  expect(matchFilter(review, filter({ eligibility: 'eligible' }))).toBe(false)
+  expect(matchFilter(review, filter({ tab: 'recommended' }))).toBe(false)
+})
+
+it('sorts by qualification then evidence priority, rather than recent updates', async () => {
+  const q = (verdict: 'eligible' | 'review' | 'ineligible') => ({ verdict, summary: verdict, checks: [], checked_at: '2026-10-05' })
+  const items = [
+    makeJob({ id: 'review', lastUpdatedAt: '2026-10-05', eligibility: q('review'), priority: { tier: 'verify', score: 99, label: '先核对' } }),
+    makeJob({ id: 'eligible-low', lastUpdatedAt: '2026-10-05', eligibility: q('eligible'), priority: { tier: 'low', score: 30, label: '低' } }),
+    makeJob({ id: 'eligible-high', lastUpdatedAt: '2026-08-01', eligibility: q('eligible'), priority: { tier: 'high', score: 85, label: '优先' } }),
+  ]
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(items), { headers: { 'content-type': 'application/json' } }))
+  expect((await getJobs(filter({ sort: 'priority' }))).map(j => j.id)).toEqual(['eligible-high', 'eligible-low', 'review'])
+  expect((await getJobs(filter({ sort: 'updated' })))[0].id).toBe('review')
+})
+
 describe('matchFilter', () => {
   it('filters by tab: notice', () => {
     expect(matchFilter(makeJob({ type: 'notice' }), filter({ tab: 'notice' }))).toBe(true)
@@ -84,6 +108,14 @@ describe('matchFilter', () => {
     expect(matchFilter(makeJob({ abilityMatch: 'low' }), recommended)).toBe(false)
     expect(matchFilter(makeJob({ status: 'closed' }), recommended)).toBe(false)
     expect(matchFilter(makeJob({ notInterested: true }), recommended)).toBe(false)
+  })
+
+  it('keeps direct official jobs visible while their ability fit is unknown', () => {
+    const pending = filter({ tab: 'unreviewed' })
+    expect(matchFilter(makeJob({ abilityMatch: 'unknown' }), pending)).toBe(true)
+    expect(matchFilter(makeJob({ abilityMatch: 'high' }), pending)).toBe(false)
+    expect(matchFilter(makeJob({ type: 'notice', abilityMatch: 'unknown' }), pending)).toBe(false)
+    expect(matchFilter(makeJob({ abilityMatch: 'unknown', notInterested: true }), pending)).toBe(false)
   })
 
   it('filters by keyword across JD text', () => {
@@ -114,6 +146,7 @@ describe('matchFilter', () => {
     expect(matchFilter(makeJob(), filter({ abilityMatch: 'low' }))).toBe(false)
     expect(matchFilter(makeJob({ difficulty: 8 }), filter({ difficultyMax: 7 }))).toBe(false)
     expect(matchFilter(makeJob({ difficulty: 6 }), filter({ difficultyMax: 7 }))).toBe(true)
+    expect(matchFilter(makeJob({ abilityMatch: 'unknown' }), filter({ difficultyMax: 7 }))).toBe(false)
   })
 
   it('filters by update recency and apply url presence', () => {

@@ -3,7 +3,7 @@ import type { JobTab } from '@/types'
 export const ALL_FILTER_VALUE = '__all__'
 export const SAVED_JOB_FILTERS_KEY = 'career-radar.saved-job-filters.v1'
 
-const JOB_TABS: JobTab[] = ['recommended', 'notice', 'new', 'updated', 'all', 'favorite']
+const JOB_TABS: JobTab[] = ['recommended', 'unreviewed', 'notice', 'new', 'updated', 'all', 'favorite']
 
 export interface JobFilterValues {
   tab: JobTab
@@ -16,10 +16,12 @@ export interface JobFilterValues {
   jobType: string
   ability: string
   maxDifficulty: string
+  eligibility: string
+  sort: string
 }
 
 export const DEFAULT_JOB_FILTER_VALUES: JobFilterValues = {
-  tab: 'recommended',
+  tab: 'all',
   keyword: '',
   companyId: ALL_FILTER_VALUE,
   companyType: ALL_FILTER_VALUE,
@@ -29,6 +31,8 @@ export const DEFAULT_JOB_FILTER_VALUES: JobFilterValues = {
   jobType: ALL_FILTER_VALUE,
   ability: ALL_FILTER_VALUE,
   maxDifficulty: ALL_FILTER_VALUE,
+  eligibility: 'available',
+  sort: 'priority',
 }
 
 const PARAM_KEYS: Record<Exclude<keyof JobFilterValues, 'tab'>, string> = {
@@ -41,6 +45,8 @@ const PARAM_KEYS: Record<Exclude<keyof JobFilterValues, 'tab'>, string> = {
   jobType: 'type',
   ability: 'ability',
   maxDifficulty: 'difficulty',
+  eligibility: 'eligibility',
+  sort: 'sort',
 }
 
 export function jobFilterValuesFromParams(params: URLSearchParams): JobFilterValues {
@@ -51,6 +57,8 @@ export function jobFilterValuesFromParams(params: URLSearchParams): JobFilterVal
     const value = params.get(key)
     if (value) values[field as keyof typeof PARAM_KEYS] = value
   }
+  if (![ALL_FILTER_VALUE, 'available', 'eligible', 'review', 'ineligible'].includes(values.eligibility)) values.eligibility = DEFAULT_JOB_FILTER_VALUES.eligibility
+  if (!['priority', 'updated'].includes(values.sort)) values.sort = DEFAULT_JOB_FILTER_VALUES.sort
   return values
 }
 
@@ -92,4 +100,3 @@ export function loadSavedJobFilters(): JobFilterValues | null {
 export function saveJobFilters(values: JobFilterValues): void {
   window.localStorage.setItem(SAVED_JOB_FILTERS_KEY, JSON.stringify(values))
 }
-

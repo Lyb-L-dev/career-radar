@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime
+import re
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .models import StoredJobEvent
@@ -12,6 +13,31 @@ _LEVEL_LABELS = {"high": "高", "medium": "中", "low": "低"}
 _PROFILE_LABELS = {"high": "高", "medium": "中", "low": "低", "unknown": "信息不足"}
 _DIFFICULTY_LABELS = {"low": "低", "medium": "中", "high": "高", "very_high": "很高"}
 _EVENT_LABELS = {"new": "新增", "updated": "更新", "preview": "预览"}
+_REPORT_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})-jobs\.(?:md|csv)$")
+
+
+def prune_expired_reports(output_dir: Path, retention_days: int, *, today: date) -> int:
+    """删除严格匹配日报命名且超过保留期的普通文件。"""
+
+    if retention_days < 0:
+        raise ValueError("日报保留天数不能为负数")
+    if not output_dir.is_dir():
+        return 0
+
+    cutoff = today - timedelta(days=retention_days)
+    removed = 0
+    for path in output_dir.iterdir():
+        match = _REPORT_NAME.fullmatch(path.name)
+        if not match or not path.is_file() or path.is_symlink():
+            continue
+        try:
+            report_date = date.fromisoformat(match.group(1))
+        except ValueError:
+            continue
+        if report_date < cutoff:
+            path.unlink()
+            removed += 1
+    return removed
 
 
 def _single_line(value: str | None) -> str:

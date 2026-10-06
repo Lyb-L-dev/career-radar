@@ -25,7 +25,7 @@ from career_radar.application.service import ApplicationService
 from career_radar.cli import main
 from career_radar.config import load_settings
 from career_radar.models import JobPosting, MatchLevel
-from career_radar.storage import JobStorage
+from career_radar.storage import SCHEMA_VERSION, JobStorage
 
 
 def test_application_status_metadata_covers_the_complete_state_machine() -> None:
@@ -241,7 +241,7 @@ def test_existing_version_five_database_is_upgraded_in_place(tmp_path: Path) -> 
         table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='application_runs'"
         ).fetchone()
-    assert version == 10
+    assert version == SCHEMA_VERSION
     assert table == ("application_runs",)
 
 

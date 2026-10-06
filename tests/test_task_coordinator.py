@@ -16,12 +16,12 @@ def test_tasks_with_shared_resource_are_serialized() -> None:
     second_acquired = threading.Event()
 
     def first() -> None:
-        with coordinator.acquire("scan", "one", {"deepseek"}):
+        with coordinator.acquire("scan", "one", {"llm"}):
             first_acquired.set()
             release_first.wait(timeout=2)
 
     def second() -> None:
-        with coordinator.acquire("application", "two", {"deepseek"}):
+        with coordinator.acquire("application", "two", {"llm"}):
             second_acquired.set()
 
     first_thread = threading.Thread(target=first)
@@ -64,13 +64,13 @@ def test_shutdown_rejects_queued_and_new_acquisitions() -> None:
     queued_rejected = threading.Event()
 
     def holder() -> None:
-        with coordinator.acquire("scan", "holder", {"deepseek"}):
+        with coordinator.acquire("scan", "holder", {"llm"}):
             first_acquired.set()
             release_first.wait(timeout=2)
 
     def waiter() -> None:
         try:
-            with coordinator.acquire("scan", "waiter", {"deepseek"}):
+            with coordinator.acquire("scan", "waiter", {"llm"}):
                 pytest.fail("queued task must not acquire after shutdown")
         except TaskCoordinatorClosed:
             queued_rejected.set()
@@ -84,7 +84,7 @@ def test_shutdown_rejects_queued_and_new_acquisitions() -> None:
     assert queued_rejected.wait(timeout=2)
 
     with pytest.raises(TaskCoordinatorClosed, match="正在关闭"):
-        with coordinator.acquire("scan", "one", {"deepseek"}):
+        with coordinator.acquire("scan", "one", {"llm"}):
             pass
 
     release_first.set()

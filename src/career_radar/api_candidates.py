@@ -371,9 +371,9 @@ def create_candidates_router(
                         published_at=source["published_at"],
                         source_url=source_url or "",
                         application_method="人工导入的已核验官方招聘材料",
-                        match_reason="人工导入，尚未使用 DeepSeek 评估届别匹配",
-                        profile_fit_reason="人工导入，尚未使用 DeepSeek 评估能力匹配",
-                        difficulty_reason="人工导入，尚未使用 DeepSeek 评估投递难度",
+                        match_reason="人工导入，尚未使用 LLM 评估届别匹配",
+                        profile_fit_reason="人工导入，尚未使用 LLM 评估能力匹配",
+                        difficulty_reason="人工导入，尚未使用 LLM 评估投递难度",
                     )
                 ],
                 now,

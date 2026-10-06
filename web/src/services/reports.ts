@@ -19,9 +19,26 @@ export async function generateReport(date?: string): Promise<{ ok: boolean }> {
   return delay({ ok: true }, 600, 1000)
 }
 
-export async function resendReportEmail(date: string): Promise<{ ok: boolean }> {
-  if (!USE_MOCK) return apiRequest(`/reports/${encodeURIComponent(date)}/resend`, { method: 'POST' })
-  return delay({ ok: true }, 400, 700)
+export interface ReportEmailResult {
+  ok: boolean
+  message: string
+  eventCount: number
+  sentAt: string
+}
+
+export async function resendReportEmail(date: string, confirmed: boolean): Promise<ReportEmailResult> {
+  if (!USE_MOCK) {
+    return apiRequest(`/reports/${encodeURIComponent(date)}/resend`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmed }),
+    })
+  }
+  return delay({
+    ok: true,
+    message: '历史日报邮件已发送，共 3 个岗位事件',
+    eventCount: 3,
+    sentAt: new Date().toISOString(),
+  }, 400, 700)
 }
 
 /** 触发浏览器下载一个模拟文件（Markdown / CSV） */

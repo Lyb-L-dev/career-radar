@@ -33,7 +33,7 @@ class TaskCoordinator:
         self._limits = {
             "browser": 1,
             "opencli": 1,
-            "deepseek": 1,
+            "llm": 1,
             "document": 1,
             **(limits or {}),
         }
@@ -112,4 +112,3 @@ class TaskCoordinator:
         with self._condition:
             self._closed = True
             self._condition.notify_all()
-

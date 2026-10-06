@@ -11,37 +11,19 @@ cd E:\AIProjects\work\career-radar
 
 ## 按已确认简历抓取（推荐）
 
-### 新电脑准备
-
-仓库不包含浏览器登录态、真实简历或 API 密钥。先按 README 安装 Career Radar，再把抓取工具安装在同级 `boss-zhipin-scraper` 目录：
-
-```powershell
-cd E:\AIProjects\work
-git clone https://github.com/eatmoreduck/boss-zhipin-scraper.git
-cd boss-zhipin-scraper
-git checkout 80f0e478b050a6f11dff806745fe61429ad474d9
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-如果安装在别处，在启动 Career Radar 前设置 `CAREER_RADAR_BOSS_SCRAPER_DIR` 为抓取工具目录。确认 `private/application_profile.yaml` 的简历事实后才可按简历抓取；最新 Word 简历可自行放在 `private/boss_resume.docx`。当前 Word 提取适配微博舆情、JarvisOS、CareerRadar 项目布局；其他简历可使用已确认的 YAML 画像。私有文件由 Git 忽略，不随仓库分发。
-
-### 在岗位页使用
-
-本机已准备 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper)，路径为 `E:\AIProjects\work\boss-zhipin-scraper`，当前核对版本为提交 `80f0e478b050a6f11dff806745fe61429ad474d9`。Career Radar 复用它的 CDP 列表和详情抓取，不复制或改写上游爬虫。它需要专用 Edge 登录态，但**不需要第二个 Career Radar 网页服务**。若专用 Edge 已关闭，在 BOSS 岗位列表点“获取岗位”→“打开 BOSS 登录窗口”，或手动运行：
+可在本地安装 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper)，路径为 `E:\AIProjects\work\boss-zhipin-scraper`，当前核对版本为提交 `80f0e478b050a6f11dff806745fe61429ad474d9`。Career Radar 复用它的 CDP 列表和详情抓取，不复制或改写上游爬虫。它需要专用 Edge 登录态，但**不需要第二个 Career Radar 网页服务**。若专用 Edge 已关闭，在 BOSS 岗位列表点“获取岗位”→“打开 BOSS 登录窗口”，或手动运行：
 
 ```powershell
 cd E:\AIProjects\work\boss-zhipin-scraper
 .\.venv\Scripts\python.exe scripts\boss_cdp_raw.py --setup-edge --no-wait-login
 ```
 
-在该 Edge 窗口手动登录 BOSS 后，打开岗位页的“BOSS直聘”来源，点击列表工具栏的“获取岗位”。系统优先读取 Git 忽略的 `private/boss_resume.docx`（用户这次提供的最新简历副本），仅提取技术词和项目证据，不读取联系方式用于模型筛选。弹窗会展示自动生成的搜索方向；当前简历支持 AI 应用、Python 后端、数据开发、数据分析、测试开发、全栈、机器学习应用与 FDE 共 8 个方向。默认全国、每方向 1 页、最多读 8 条完整 JD，可添加一个补充关键词，也可将详情上限调至 12 条。补充词会**增加**搜索，不会替换默认方向。点击“开始筛选抓取”后，可在“获取岗位”中查看阶段和数量，整个过程可能需要几分钟。Career Radar 只允许同时跑一批，不自动循环抓取，也不自动投递。更新简历时，替换 `private/boss_resume.docx` 即可更新岗位方向与 AI 证据。
+在该 Edge 窗口手动登录 BOSS 后，打开岗位页的“BOSS直聘”来源，点击列表工具栏的“获取岗位”。系统优先读取 Git 忽略的 `private/boss_resume.docx`（用户本地已确认的简历副本），仅提取技术词和项目证据，不读取联系方式用于模型筛选。弹窗会展示自动生成的搜索方向；搜索方向由用户简历中的技术与项目证据生成；仅启用有对应证据的方向。默认全国、每方向 1 页、最多读 8 条完整 JD，可添加一个补充关键词，也可将详情上限调至 12 条。补充词会**增加**搜索，不会替换默认方向。点击“开始筛选抓取”后，可在“获取岗位”中查看阶段和数量，整个过程可能需要几分钟。Career Radar 只允许同时跑一批，不自动循环抓取，也不自动投递。更新简历时，替换 `private/boss_resume.docx` 即可更新岗位方向与 AI 证据。
 
-流程为每个方向选用应届生、经验不限或 1 年以内的一种平台筛选，按**最新简历的技术/项目证据**与 BOSS 保存的“已毕业、不接受实习”偏好去重并筛掉明确不符的在校/实习、届别、学历、经验和非目标方向岗位。详情名额按方向轮流分配，避免 AI 岗位挤掉后端、数据或测试岗位；只对入围者打开完整 JD，再用**小米 MiMo**核对报名条件和方向匹配。只有未发现硬性不符、且 MiMo 判断方向强相关或可考虑的岗位才写入机会池；原始列表和被淘汰的详情只在本机临时目录中处理，结束后清理。简历姓名、电话、邮箱和浏览器登录态不发送给 MiMo。二本或大公司名称**本身不是排除条件**；只有岗位明示学校门槛等硬条件时才排除。AI 的“可考虑”不保证招聘方接受，投递前仍需打开原始 JD 核对。每次抓取受页数、搜索词和详情上限约束，不能保证穷尽 BOSS 全站岗位。
+流程为每个方向选用应届生、经验不限或 1 年以内的一种平台筛选，按**最新简历的技术/项目证据**与 BOSS 页面保存的学籍和实习偏好去重并筛掉明确不符的在校/实习、届别、学历、经验和非目标方向岗位。详情名额按方向轮流分配，避免 AI 岗位挤掉后端、数据或测试岗位；只对入围者打开完整 JD，再用**小米 MiMo**核对报名条件和方向匹配。只有未发现硬性不符、且 MiMo 判断方向强相关或可考虑的岗位才写入机会池；原始列表和被淘汰的详情只在本机临时目录中处理，结束后清理。简历姓名、电话、邮箱和浏览器登录态不发送给 MiMo。二本或大公司名称**本身不是排除条件**；只有岗位明示学校门槛等硬条件时才排除。AI 的“可考虑”不保证招聘方接受，投递前仍需打开原始 JD 核对。每次抓取受页数、搜索词和详情上限约束，不能保证穷尽 BOSS 全站岗位。
 
 为避免下一批反复打开同一 JD，系统在 Git 忽略的 `private/boss_capture_history.json` 中只保留已完成审核职位链接的 SHA-256 摘要、列表字段摘要和时间，不保存落选岗位名称、JD 或招聘者信息。相同简历、模型与筛选偏好下，7 天内会跳过列表字段未变化的职位，把详情名额让给同方向下一批候选；职位名称、公司、地点、薪资、标签或技能变化时立即重新核对，简历或模型提示词变化也会自动失效。数据库中已有且 AI 结果仍有效的近期岗位同样会跳过。这让多次有上限的抓取逐步扩大覆盖面，仍不能保证穷尽平台结果。
 
-2026-10-04 完善验证：离线集成测试覆盖已接纳/落选岗位跳过、简历更新后重评、7 天到期、列表要求变化后重评和 MiMo 故障时不入库。真实数据库回归使用现有 36 条线索中的 4 条当前 AI 结果，模拟这些职位的列表输入；确认跳过 4 条、详情请求 0 次、模型调用 0 次、入库 0 条。该回归未发起新的 BOSS 搜索。
 
 如果抓取提示无法连接专用 Edge，可先检查：
 

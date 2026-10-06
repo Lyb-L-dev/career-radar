@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urlsplit
 from zoneinfo import ZoneInfo
 
 from .ats_source import ATSSourceError, ats_jobs_to_postings, fetch_ats_jobs
-from .crawler import PageFetcher
+from .crawler import CrawlError, PageFetcher
 from .discovery import PageDocument, heuristic_follow_links, is_irrelevant_link, parse_html
 from .job_merge import is_same_job, merge_job_postings
 from .llm import PageAnalyzer, create_provider
@@ -25,14 +25,18 @@ from .models import (
     CompanyRunResult,
     JobPosting,
     LinkCandidate,
+    MonitorMode,
     PageAnalysis,
     RunResult,
     Settings,
     StoredJobEvent,
 )
 from .notifications import NotificationError, send_job_notifications
-from .output import ReportWriter
+from .official_sources import EXTRACTOR_VERSION, extract_official_jobs
+from .output import ReportWriter, prune_expired_reports
 from .prompts import SYSTEM_PROMPT
+from .report_delivery import notification_events
+from .sitemap_discovery import discover_recruitment_urls
 from .storage import JobStorage, compute_job_hashes
 from .url_utils import (
     canonicalize_crawl_url,
@@ -61,7 +65,7 @@ class AnalysisBudget:
     def consume(self) -> None:
         if self.used >= self.limit:
             raise AnalysisBudgetExceeded(
-                f"本次运行已达到 DeepSeek 页面分析上限 {self.limit}，"
+                f"本次运行已达到 LLM 页面分析上限 {self.limit}，"
                 "剩余变化页面留待下次扫描"
             )
         self.used += 1
@@ -76,11 +80,16 @@ def _analysis_context_hash(settings: Settings, company: CompanyConfig) -> str:
         "attributionKeywords": company.attribution_keywords,
         "provider": settings.llm.provider,
         "model": settings.llm.model,
+        "renderMode": settings.crawler.render_mode,
+        "entryWaitSelector": company.entry_wait_selector,
+        "minStaticTextChars": settings.crawler.min_static_text_chars,
+        "waitAfterLoadMs": settings.crawler.playwright_wait_after_load_ms,
         "maxLinks": settings.crawler.max_links_in_prompt,
         "candidate": settings.candidate.model_dump(mode="json"),
         "systemPromptHash": hashlib.sha256(
             SYSTEM_PROMPT.encode("utf-8")
         ).hexdigest(),
+        "officialExtractorVersion": EXTRACTOR_VERSION,
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -149,6 +158,15 @@ def _homepage_discovery_enabled(company: CompanyConfig) -> bool:
         return company.discover_from_homepage
     path = urlsplit(company.url).path.rstrip("/").casefold()
     return path in {"", "/index", "/index.html", "/home"}
+
+
+def _sitemap_discovery_enabled(company: CompanyConfig) -> bool:
+    if isinstance(company.discover_from_sitemap, bool):
+        return company.discover_from_sitemap
+    return _homepage_discovery_enabled(company) or company.monitor_mode in {
+        MonitorMode.NOTICES,
+        MonitorMode.BOTH,
+    }
 
 
 def _page_matches_company_scope(company: CompanyConfig, page_text: str) -> bool:
@@ -225,6 +243,27 @@ class CompanyMonitor:
         # 大型央国企招聘站的栏目很多，允许为单家公司设置更保守的页数上限；
         # 未配置时继续使用全局值，保持旧配置行为不变。
         page_limit = company.max_pages or self.settings.crawler.max_pages_per_company
+        if page_limit > 1 and _sitemap_discovery_enabled(company):
+            sitemap_fetch = getattr(self.fetcher, "fetch_sitemap", None)
+            if callable(sitemap_fetch):
+                robots = getattr(self.fetcher, "robots", None)
+                hints = robots.sitemaps_for(start_url) if robots is not None else ()
+                for discovered in discover_recruitment_urls(
+                    start_url,
+                    self.fetcher,
+                    sitemap_hints=hints,
+                    should_cancel=should_cancel,
+                ):
+                    variants = query_variants.setdefault(crawl_path_key(discovered), set())
+                    if (
+                        discovered not in variants
+                        and len(variants) >= self.settings.crawler.max_query_variants_per_path
+                    ):
+                        continue
+                    variants.add(discovered)
+                    if discovered not in queued:
+                        queue.append(discovered)
+                        queued.add(discovered)
         while queue and attempts < page_limit:
             _raise_if_cancelled(should_cancel)
             requested_url = queue.popleft()
@@ -258,11 +297,21 @@ class CompanyMonitor:
                         conditional_headers["If-Modified-Since"] = str(
                             cached["last_modified"]
                         )
-                page = (
-                    self.fetcher.fetch(requested_url, conditional_headers)
-                    if conditional_headers
-                    else self.fetcher.fetch(requested_url)
+                entry_selector = (
+                    company.entry_wait_selector if requested_url == start_url else None
                 )
+                if entry_selector:
+                    page = self.fetcher.fetch(
+                        requested_url,
+                        conditional_headers or None,
+                        wait_selector=entry_selector,
+                    )
+                else:
+                    page = (
+                        self.fetcher.fetch(requested_url, conditional_headers)
+                        if conditional_headers
+                        else self.fetcher.fetch(requested_url)
+                    )
                 _raise_if_cancelled(should_cancel)
                 final_url = canonicalize_url(page.final_url)
                 final_host = urlsplit(final_url).hostname or ""
@@ -274,12 +323,15 @@ class CompanyMonitor:
                 # ``final_url`` 用作去重键可以去掉尾斜杠；解析相对链接时必须使用
                 # 服务端真实目录 URL，否则 ``./202607/article.htm`` 会错误地少一层路径。
                 cache_status = "miss"
+                direct_complete = False
+                direct_follow_urls: list[str] = []
                 if page.not_modified:
                     if not cache_valid or cached is None:
                         raise RuntimeError("页面返回 304，但没有可复用的分析缓存")
-                    document = _document_from_cache(
-                        json.loads(str(cached["document_json"]))
-                    )
+                    document_payload = json.loads(str(cached["document_json"]))
+                    document = _document_from_cache(document_payload)
+                    direct_complete = bool(document_payload.get("direct_complete"))
+                    direct_follow_urls = list(document_payload.get("direct_follow_urls") or [])
                     analysis = PageAnalysis.model_validate_json(
                         str(cached["analysis_json"])
                     )
@@ -291,6 +343,9 @@ class CompanyMonitor:
                         normalize_request_url(page.final_url),
                     )
                     content_hash = _document_content_hash(document)
+                    direct_extraction = extract_official_jobs(
+                        final_url, page.html, company.name
+                    )
                     if (
                         cache_valid
                         and cached is not None
@@ -299,7 +354,22 @@ class CompanyMonitor:
                         analysis = PageAnalysis.model_validate_json(
                             str(cached["analysis_json"])
                         )
+                        direct_complete = bool(
+                            json.loads(str(cached["document_json"])).get("direct_complete")
+                        )
+                        direct_follow_urls = list(
+                            json.loads(str(cached["document_json"])).get("direct_follow_urls") or []
+                        )
                         cache_status = "content_unchanged"
+                    elif direct_extraction is not None:
+                        analysis = PageAnalysis(
+                            page_type=direct_extraction.page_type,
+                            contains_recruitment_info=True,
+                            jobs=direct_extraction.jobs,
+                        )
+                        direct_complete = direct_extraction.list_complete
+                        direct_follow_urls = direct_extraction.follow_urls
+                        cache_status = "direct"
                     else:
                         _raise_if_cancelled(should_cancel)
                         if self.analysis_budget is not None:
@@ -360,7 +430,11 @@ class CompanyMonitor:
                             if cached and cached.get("last_modified")
                             else None
                         ),
-                        document=_document_payload(document),
+                        document={
+                            **_document_payload(document),
+                            "direct_complete": direct_complete,
+                            "direct_follow_urls": direct_follow_urls,
+                        },
                         analysis=analysis.model_dump(mode="json"),
                         updated_at=fetched_at,
                     )
@@ -389,8 +463,8 @@ class CompanyMonitor:
                 candidates_by_url = {
                     canonicalize_url(link.url): link for link in document.links
                 }
-                follow_urls = []
-                for follow in analysis.follow_links:
+                follow_urls = list(direct_follow_urls)
+                for follow in ([] if direct_complete else analysis.follow_links):
                     candidate = candidates_by_url.get(canonicalize_url(follow.url))
                     if candidate is None or is_irrelevant_link(candidate.url, candidate.text):
                         continue
@@ -419,8 +493,21 @@ class CompanyMonitor:
                         LOGGER.debug("LLM 招聘入口缺少页面锚点证据，跳过：%s", follow.url)
                         continue
                     follow_urls.append(follow.url)
-                # 官网首页只有明确开启智能发现时才补充启发式招聘入口。
-                allow_heuristic = final_url != canonicalize_url(company.url) or discovery_enabled
+                # 官网首页仅在启用发现时展开；配置成 /jobs、/careers 等明确招聘入口
+                # 时，即使 auto 没有开启首页发现，也应跟进页面上可见的岗位详情。
+                start_path = urlsplit(company.url).path.rstrip("/").casefold()
+                explicit_entry = start_path not in {"", "/index", "/index.html", "/home"}
+                allow_heuristic = (
+                    not direct_complete
+                    and (
+                        final_url != canonicalize_url(company.url)
+                        or discovery_enabled
+                        or (
+                            explicit_entry
+                            and analysis.page_type in {"career_home", "job_list", "mixed"}
+                        )
+                    )
+                )
                 if allow_heuristic:
                     follow_urls.extend(
                         heuristic_follow_links(
@@ -551,8 +638,13 @@ class CompanyMonitor:
             },
         )
         try:
-            ats_jobs = fetch_ats_jobs(source)
-        except ATSSourceError as exc:
+            def before_request(url: str) -> None:
+                _raise_if_cancelled(should_cancel)
+                self.fetcher.robots.ensure_allowed(url)
+                self.fetcher.limiter.wait(url)
+
+            ats_jobs = fetch_ats_jobs(source, before_request=before_request)
+        except (ATSSourceError, CrawlError) as exc:
             message = f"{company.name}｜ATS 接口失败｜{exc}"
             LOGGER.error(message)
             result.errors.append(message)
@@ -780,23 +872,28 @@ class MonitorService:
         apprise_sent = False
         if not dry_run:
             _raise_if_cancelled(should_cancel)
+            report_now = datetime.now(timezone)
             writer = ReportWriter(self.settings.app.output_dir)
             report_path, csv_path = writer.write_daily(
                 output_events,
                 errors,
-                datetime.now(timezone),
+                report_now,
                 write_empty=self.settings.app.write_empty_report,
             )
+            try:
+                removed_reports = prune_expired_reports(
+                    self.settings.app.output_dir,
+                    self.settings.app.report_retention_days,
+                    today=report_now.date(),
+                )
+                if removed_reports:
+                    LOGGER.info("已自动清理 %s 个过期日报文件", removed_reports)
+            except OSError as exc:
+                message = f"历史日报自动清理失败｜{type(exc).__name__}: {exc}"
+                LOGGER.error(message)
+                errors.append(message)
             _raise_if_cancelled(should_cancel)
-            notify_levels = set(self.settings.app.notify_match_levels)
-            notify_profile_levels = set(self.settings.app.notify_profile_fit_levels)
-            email_events = [
-                event
-                for event in changed
-                if event.job.match_level in notify_levels
-                and event.job.profile_fit_level in notify_profile_levels
-                and event.job.difficulty_score <= self.settings.app.notify_max_difficulty_score
-            ]
+            email_events = notification_events(self.settings, changed)
             if self.settings.smtp.enabled and not disable_email and email_events:
                 _raise_if_cancelled(should_cancel)
                 try:

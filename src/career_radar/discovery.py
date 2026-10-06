@@ -6,7 +6,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -22,6 +22,7 @@ _CAREER_TERMS = (
     "recruitment",
     "join-us",
     "join us",
+    "/join/",
     "campus",
     "graduate",
     "graduates",
@@ -32,6 +33,7 @@ _CAREER_TERMS = (
     "社会招聘",
     "实习",
     "加入我们",
+    "招贤纳士",
     "人才招聘",
 )
 _JOB_TERMS = (
@@ -147,9 +149,8 @@ def _preferred_visible_text(
 ) -> str:
     """优先用 trafilatura 去除导航/页脚等样板文本，内容损失过大时回退到原清洗结果。
 
-    trafilatura 对正文型页面更干净（更省 LLM token），但招聘页有时依赖列表/卡片
-    结构，直接替换可能丢内容。因此只有 trafilatura 结果至少保留原正文一半以上
-    字符时才采用，其余情况一律回退，保证不会比现在的表现更差。
+    trafilatura 对正文型页面更干净（更省 LLM token），但招聘要求也常放在短表格中，
+    必须保留表格。列表/卡片结构可能仍丢失，因此过短时回退原清洗结果。
     """
 
     try:
@@ -160,7 +161,7 @@ def _preferred_visible_text(
                 value = trafilatura.extract(
                     html,
                     include_comments=False,
-                    include_tables=False,
+                    include_tables=True,
                     favor_precision=True,
                     output_format="txt",
                 )
@@ -203,6 +204,16 @@ def _score_link(text: str, url: str) -> tuple[int, int]:
         re.IGNORECASE,
     ):
         job_score += 5
+    # 一些招聘系统用 /job?id=40 一类查询参数区分详情，路径本身没有 /job/。
+    parts = urlsplit(url)
+    if re.search(r"/(?:job|jobs|jobinfo|jobdetail|position|positions|requisition)$", parts.path, re.I):
+        if any(
+            key.casefold()
+            in {"id", "jobid", "job_id", "positionid", "position_id", "requisitionid", "requisition_id"}
+            and value.strip()
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        ):
+            job_score += 5
     # 一些中文官网把“招聘”简写为 zp，且入口只有图片没有锚文本，例如
     # /archives/2026zp。必须同时包含年份与独立 zp 路径段，避免把普通文章放开。
     if re.search(r"/(?:[^/?#]*/)*(?:20\d{2}[-_]?zp)(?:/|$)", url, re.IGNORECASE):

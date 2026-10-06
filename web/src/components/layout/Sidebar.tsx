@@ -7,11 +7,13 @@ import {
   FileText,
   Radar,
   FileUser,
+  Map,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const NAV_ITEMS = [
   { to: '/', label: '总览', icon: LayoutDashboard, end: true },
+  { to: '/growth', label: '成长计划', icon: Map },
   { to: '/jobs', label: '岗位', icon: Briefcase },
   { to: '/applications', label: '申请材料', icon: FileUser },
   { to: '/companies', label: '企业监控', icon: Building2 },
@@ -24,7 +26,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col">
       {/* 品牌区 */}
       <div className="flex h-16 items-center gap-2.5 px-5 shrink-0">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-brand text-white">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-brand-mark text-white">
           <Radar className="size-4" />
         </span>
         <div className="leading-tight">
