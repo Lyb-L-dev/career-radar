@@ -3,7 +3,7 @@
 Career Radar 只需启动一次。在项目目录运行：
 
 ```powershell
-cd E:\AIProjects\work\career-radar
+cd career-radar
 .\.venv\Scripts\python.exe -m career_radar serve -c config.yaml
 ```
 
@@ -11,10 +11,10 @@ cd E:\AIProjects\work\career-radar
 
 ## 按已确认简历抓取（推荐）
 
-可在本地安装 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper)，路径为 `E:\AIProjects\work\boss-zhipin-scraper`，当前核对版本为提交 `80f0e478b050a6f11dff806745fe61429ad474d9`。Career Radar 复用它的 CDP 列表和详情抓取，不复制或改写上游爬虫。它需要专用 Edge 登录态，但**不需要第二个 Career Radar 网页服务**。若专用 Edge 已关闭，在 BOSS 岗位列表点“获取岗位”→“打开 BOSS 登录窗口”，或手动运行：
+可在本地安装 [eatmoreduck/boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper)，路径为 `boss-zhipin-scraper（项目同级目录，或设置 CAREER_RADAR_BOSS_SCRAPER_DIR）`，当前核对版本为提交 `80f0e478b050a6f11dff806745fe61429ad474d9`。Career Radar 复用它的 CDP 列表和详情抓取，不复制或改写上游爬虫。它需要专用 Edge 登录态，但**不需要第二个 Career Radar 网页服务**。若专用 Edge 已关闭，在 BOSS 岗位列表点“获取岗位”→“打开 BOSS 登录窗口”，或手动运行：
 
 ```powershell
-cd E:\AIProjects\work\boss-zhipin-scraper
+cd ..\boss-zhipin-scraper
 .\.venv\Scripts\python.exe scripts\boss_cdp_raw.py --setup-edge --no-wait-login
 ```
 
@@ -25,23 +25,12 @@ cd E:\AIProjects\work\boss-zhipin-scraper
 为避免下一批反复打开同一 JD，系统在 Git 忽略的 `private/boss_capture_history.json` 中只保留已完成审核职位链接的 SHA-256 摘要、列表字段摘要和时间，不保存落选岗位名称、JD 或招聘者信息。相同简历、模型与筛选偏好下，7 天内会跳过列表字段未变化的职位，把详情名额让给同方向下一批候选；职位名称、公司、地点、薪资、标签或技能变化时立即重新核对，简历或模型提示词变化也会自动失效。数据库中已有且 AI 结果仍有效的近期岗位同样会跳过。这让多次有上限的抓取逐步扩大覆盖面，仍不能保证穷尽平台结果。
 
 
-如果抓取提示无法连接专用 Edge，可先检查：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\boss_cdp_raw.py --check
-.\.venv\Scripts\python.exe scripts\boss_cdp_raw.py --smoke-test
-```
-
 手动导入 JSON 仍保留为兼容入口，**它不经过上述抓取前筛选**；只有需要导入旧文件时再使用。单个文件最多 5 MB、2000 条。登录验证码、密码、Cookie 不要填进 Career Radar，也不要发到聊天里。
 
 ## 筛选和 AI
 
-本地规则先按简历支持的技术方向、应届要求、技能和 JD 完整性排序，并解释排除或待确认的原因。当前偏好已保存为 2026 届、已毕业、不接受实习，城市不限制排序。分数代表阅读优先级，不代表录用概率；遇到不明学历、届别或公司信息时应回 BOSS 原始页面核对。
+本地规则先按简历支持的技术方向、应届要求、技能和 JD 完整性排序，并解释排除或待确认的原因。学籍、实习和城市偏好来自用户本地设置，请按实际情况填写。分数代表阅读优先级，不代表录用概率；遇到不明学历、届别或公司信息时应回 BOSS 原始页面核对。
 
 有完整 JD 的候选职位可以手动点击“AI 判断能否投”，也可以点击“筛选待看岗位”顺序处理最多 20 条。BOSS AI 仅在当前配置的模型为**小米 MiMo**时运行；它核对报名硬条件和岗位匹配，并展示职位与画像证据。缺证据时显示“待确认”。点击前不会产生模型调用，结果按 JD、画像和模型配置缓存。AI 不会自动投递。
 
-旧流程曾用 FDE、AI 应用开发、AI Agent 各一页的小样本得到 32 个唯一机会，并导入原项目数据库；那些历史记录不会因启用新抓取方式自动删除。“待看（不含排除）”默认隐藏旧样本中明确不合适的岗位，需要核查时可切换“已排除”。旧版导入误用上游本地生成的 MD5 摘要作为 BOSS 职位 ID，已用原始列表 32/32 映射修复真实链接；修复前备份位于 `tmp/boss-id-before-repair-20260929-175159.db`。新流程只限制**以后新抓取并持久化**的职位。若页面为空，先检查是否打开了 8000 端口上的当前项目进程。
-
-2026-09-29 小范围真机验证：专用 Edge 登录检查和上游搜索 smoke test 通过；一次全国“AI应用开发”抓取收到 45 条列表，筛出 1 条详情，读取 JD 后发现明确硬条件不符，因此 0 次 MiMo 调用、0 条入库。随后第二次小样本因专用 Edge 窗口已关闭而停止，没有继续请求或导入。该验证只证明本机这次搜索和筛选路径，不代表所有关键词与日期的覆盖率；MiMo 接纳分支由离线假网关集成测试验证。
-
-新简历的多方向流程随后完成一次真实验证：8 个方向、每方向 1 页，共收到 120 条列表记录；列表阶段跳过 17 条明确硬条件不符和 8 条非目标方向，跨方向选出 8 条详情。详情阶段另排除 3 条硬条件不符，MiMo 判 1 条方向不合适，最终新入库 4 条：Python 工程师、业务全栈开发工程师、大数据开发、AI Agent 全栈工程师（FDE）。这 4 条的方向匹配为 strong/reasonable，但报名资格均为 unknown，属于值得阅读或冲刺的线索，**不是确定符合招聘方全部报名条件**。运行后机会池从 32 条变为 36 条，临时抓取文件已清理。该次样本只验证这些关键词、日期和 BOSS 当时返回的第一页，不能推断全站召回率。
+已有线索保存在本地数据库，新抓取不会自动清空历史线索。若页面为空，请检查是否打开当前项目的 8000 服务。

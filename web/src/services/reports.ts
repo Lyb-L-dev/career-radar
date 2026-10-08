@@ -1,47 +1,42 @@
-import { apiDownload, apiRequest, delay, copy, USE_MOCK } from './config'
-import { reports } from '@/mocks/reports'
-import type { Report } from '@/types'
-
+import { apiDownload, apiRequest } from './config';
+import type { Report } from '@/types';
 export async function getReports(): Promise<Report[]> {
-  if (!USE_MOCK) return apiRequest('/reports')
-  return delay(copy(reports))
+    return apiRequest('/reports');
 }
-
 export async function getReport(date: string): Promise<Report | undefined> {
-  if (!USE_MOCK) return apiRequest(`/reports/${encodeURIComponent(date)}`)
-  return delay(copy(reports.find((r) => r.date === date)))
+    return apiRequest(`/reports/${encodeURIComponent(date)}`);
 }
-
-export async function generateReport(date?: string): Promise<{ ok: boolean }> {
-  if (!USE_MOCK) {
-    return apiRequest('/reports/generate', { method: 'POST', body: JSON.stringify({ date }) })
-  }
-  return delay({ ok: true }, 600, 1000)
+export async function generateReport(date?: string): Promise<{
+    ok: boolean;
+}> {
+    {
+        return apiRequest('/reports/generate', { method: 'POST', body: JSON.stringify({ date }) });
+    }
 }
-
 export interface ReportEmailResult {
-  ok: boolean
-  message: string
-  eventCount: number
-  sentAt: string
+    ok: boolean;
+    message: string;
+    eventCount: number;
+    sentAt: string;
 }
-
 export async function resendReportEmail(date: string, confirmed: boolean): Promise<ReportEmailResult> {
-  if (!USE_MOCK) {
-    return apiRequest(`/reports/${encodeURIComponent(date)}/resend`, {
-      method: 'POST',
-      body: JSON.stringify({ confirmed }),
-    })
-  }
-  return delay({
-    ok: true,
-    message: '历史日报邮件已发送，共 3 个岗位事件',
-    eventCount: 3,
-    sentAt: new Date().toISOString(),
-  }, 400, 700)
+    {
+        return apiRequest(`/reports/${encodeURIComponent(date)}/resend`, {
+            method: 'POST',
+            body: JSON.stringify({ confirmed }),
+        });
+    }
+}
+export async function downloadReport(date: string, format: 'md' | 'csv'): Promise<{
+    ok: boolean;
+}> {
+    {
+        await apiDownload(`/reports/${encodeURIComponent(date)}/download/${format}`, `${date}-jobs.${format}`);
+        return { ok: true };
+    }
 }
 
-/** 触发浏览器下载一个模拟文件（Markdown / CSV） */
+/** 下载文本文件，供运行日志导出使用。 */
 export function downloadTextFile(filename: string, content: string, mime: string) {
   const blob = new Blob(['﻿' + content], { type: `${mime};charset=utf-8` })
   const url = URL.createObjectURL(blob)
@@ -50,26 +45,4 @@ export function downloadTextFile(filename: string, content: string, mime: string
   a.download = filename
   a.click()
   URL.revokeObjectURL(url)
-}
-
-export async function downloadReport(date: string, format: 'md' | 'csv'): Promise<{ ok: boolean }> {
-  if (!USE_MOCK) {
-    await apiDownload(`/reports/${encodeURIComponent(date)}/download/${format}`, `${date}-jobs.${format}`)
-    return { ok: true }
-  }
-  if (format === 'md') {
-    downloadTextFile(
-      `career-radar-${date}.md`,
-      `# Career Radar 日报 · ${date}\n\n> 本文件为演示环境的示例导出内容。\n\n- 新增岗位与更新岗位的完整列表请以前端页面为准。\n`,
-      'text/markdown',
-    )
-  } else {
-    // CSV 使用 UTF-8 BOM，可直接使用 Excel 打开
-    downloadTextFile(
-      `career-radar-${date}.csv`,
-      `职位名称,企业,城市,类型,难度,届别匹配,能力匹配,更新时间\nAI Agent 构建工程师（实习）,FIT2CLOUD 飞致云,上海,实习,5,高,中,2026-07-18 09:47\n`,
-      'text/csv',
-    )
-  }
-  return delay({ ok: true }, 200, 400)
 }

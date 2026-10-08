@@ -69,23 +69,6 @@ def _parser() -> argparse.ArgumentParser:
         help="合并数据库中同一公司换标题重发的同义岗位（保守阈值，仅近期活跃岗位）",
     )
 
-    eval_prompts = subparsers.add_parser(
-        "eval-prompts",
-        parents=[common],
-        help="运行内置提示词回归评测并输出报告（会调用当前配置的 LLM）",
-    )
-    eval_prompts.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help="只运行前 N 个样例；默认 0 表示全部",
-    )
-    eval_prompts.add_argument(
-        "--output",
-        type=Path,
-        help="把 Markdown 报告写入指定文件（默认只打印到终端）",
-    )
-
     profile = subparsers.add_parser(
         "check-application-profile",
         parents=[common],
@@ -170,15 +153,6 @@ def main(argv: list[str] | None = None) -> int:
                 print("未发现符合条件的同义重复岗位。")
             print(f"共合并 {len(merged)} 组。")
             return 0
-        if args.command == "eval-prompts":
-            from .prompt_eval import run_prompt_eval
-
-            report = run_prompt_eval(settings, limit=args.limit or None)
-            print(report.markdown())
-            if args.output:
-                args.output.write_text(report.markdown(), encoding="utf-8")
-                print(f"评测报告已写入：{args.output}")
-            return 0 if report.all_passed() else 1
         if args.command == "check-application-profile":
             from .application.profile import load_application_profile, profile_summary
 

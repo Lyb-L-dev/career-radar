@@ -27,14 +27,6 @@ flowchart LR
 | 回忆与项目 | 先答再教，提示后练习单独记录；支持项目材料审阅与针对材料的追问 |
 | 申请材料 | 生成、审阅和修订材料，保留人工批准与真实简历事实边界 |
 
-### 界面预览
-
-以下截图使用离线合成 JD、假模型与临时数据库，展示界面和交互；其中的能力等级不是用户真实记录。
-
-![岗位优先的首页，官网与 BOSS 来源分开展示](docs/images/overview.png)
-
-![能力路线图与可追溯的 HTTP 证据详情](docs/images/growth-map.png)
-
 首页按“岗位概况 → 双来源机会 → 今日成长 → 待处理 → 监控简报”组织。岗位筛选保留在 URL，详情可返回原列表；成长页保留桌面路线图与手机分组列表。项目材料、答案和任务反馈支持本地草稿，长模型分析与历史证据按需展开。
 
 ### 快速开始
@@ -43,7 +35,7 @@ flowchart LR
 git clone https://github.com/Lyb-L-dev/career-radar.git
 cd career-radar
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\python.exe -m playwright install chromium
 Copy-Item .env.example .env
 Copy-Item config.example.yaml config.yaml
@@ -56,17 +48,7 @@ cd ..
 
 运行前在本地 `.env` 填写模型密钥，并在 `config.yaml` 设置真实画像与来源。打开 [首页](http://127.0.0.1:8000/) 或 [成长计划](http://127.0.0.1:8000/growth)。首次使用成长模块：选择 JD → 分析要求 → 开始短测 → 查看证据与今日行动。完整配置说明见下文。
 
-**能力与数据边界：**未知能力显示“待验证”；提示后回答不计为独立掌握；项目运行记录属于用户提交，系统不执行代码。技术证据不代表满足所有报名条件，也不代表录用概率。真实配置、简历、数据库、登录态和运行结果不应提交到公开仓库。
-
-### 验证与研究
-
-前端包含 URL 恢复、中文输入、草稿恢复和候选选择回归；离线浏览器脚本覆盖岗位到成长流程、评分失败重试、四种屏宽、键盘与 axe 检查。所有这些 UI 检查使用临时数据和假模型。
-
-- [前端优化来源、实施验证与性能取舍](research/frontend-optimization-2026-10-05.md)
-- [真实 MiMo 小样本评测及局限](research/growth-live-evaluation.md)
-- [HTTP 教学内容的一手事实核对](research/growth-http-facts.md)
-
-运行前端检查：在 `web/` 执行 `npm run test`、`npm run lint`、`npm run build`。后端执行 `python -m pytest -q` 和 `python -m ruff check --no-cache src tests scripts`。完整离线 UI 验证：`python scripts/verify_frontend_ui.py --output <截图目录>`。
+**能力与数据边界：**未知能力显示“待验证”；提示后回答不计为独立掌握；项目运行记录属于用户提交，系统不执行代码。技术证据不代表满足所有报名条件，也不代表录用概率。真实配置、简历、数据库、登录态和运行结果不应提交到公开仓库。公开版本只包含运行源码、配置模板和使用说明；本地测试、评测、截图与开发记录不随仓库发布。
 
 它只访问无需登录的公开 HTTP(S) 页面；每个站点都会检查 `robots.txt`，同一域名默认间隔 5～10 秒。单个页面或单家公司失败不会中断整批任务。
 
@@ -82,7 +64,7 @@ cd ..
 
 “今日行动”每天保留一个学习任务和一个项目任务。默认预算 120 分钟，可在“复盘与设置”调整；完成反馈不会直接提升能力等级。项目运行记录按用户提交保存，第一版只做模型审阅，不执行代码。学历、届别、工作年限与技术证据分别展示，匹配结果不代表录用概率。
 
-成长数据使用同一个 SQLite 数据库中的独立表，启动时有序升级到 schema 12，保留既有岗位和画像。更新代码后重新构建 `web/` 并重启本地服务。离线回归使用 `tests/test_growth.py`；桌面与窄屏端到端验证脚本为 `scripts/verify_growth_ui.py --output <截图目录>`，使用临时数据库和假模型，不访问外部网站。
+成长数据使用同一个 SQLite 数据库中的独立表，启动时有序升级到 schema 12，保留既有岗位和画像。更新代码后重新构建 `web/` 并重启本地服务。
 
 ### 招聘监控与申请能力
 
@@ -114,7 +96,7 @@ cd ..
 - 可选 SMTP 邮件只发送指定匹配等级，正文包含 JD 摘要，完整 JD 保留在本地日报。
 - 日志按大小滚动，API Key 和 SMTP 密码只从环境变量读取。
 - FastAPI 默认只监听 `127.0.0.1`，提供真实扫描任务、配置安全写回和 Web 静态资源托管；密钥接口只返回“是否已配置”。
-- React 管理端默认调用真实 `/api`，只有显式设置 `VITE_USE_MOCK=true` 才进入演示模式。
+- React 管理端只连接真实 `/api`，不打包演示画像或模拟岗位数据。
 - 首页优先显示分来源的岗位机会，再衔接今日成长任务；“待处理事项”汇总岗位更新、收藏未投递、待人工批准材料和监控异常。
 - 岗位筛选条件同步到浏览器地址，可复制链接或刷新后继续；常用筛选可保存在本机浏览器。当前结果和勾选岗位可直接导出安全 CSV。
 - “忽略本次更新”只忽略当前 JD 内容版本；企业再次修改岗位后会自动恢复为待处理更新。
@@ -168,7 +150,6 @@ career-radar/
 │  ├─ report_delivery.py      # 历史事件恢复、统一通知筛选与日报投递
 │  └─ pipeline.py             # 跨公司运行流程
 ├─ web/                        # React/TypeScript 管理端源码（与后端同仓库）
-├─ tests/                     # 离线单元测试与 API 契约测试
 ├─ data/                      # 运行后生成 SQLite（Git 忽略）
 ├─ output/                    # 日报（Git 忽略）
 └─ logs/                      # 滚动日志（Git 忽略）
@@ -182,7 +163,7 @@ PowerShell 能找到 Python；下面直接使用电脑现有的默认版本，�
 打开 PowerShell，逐条执行：
 
 ```powershell
-cd E:\AIProjects\work\career-radar
+cd career-radar
 python --version
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
@@ -218,10 +199,9 @@ XIAOMIMIMO_API_KEY=你的真实小米MiMo密钥
 需要 Node.js 22（本项目已用 `v22.14.0` 验证）；先运行 `node --version` 确认。
 
 ```powershell
-cd E:\AIProjects\work\career-radar\web
+cd career-radar\web
 node --version
 npm ci
-npm run test
 npm run lint
 npm run build
 ```
@@ -229,7 +209,7 @@ npm run build
 然后只需启动一个本地服务：
 
 ```powershell
-cd E:\AIProjects\work\career-radar
+cd career-radar
 .\.venv\Scripts\python.exe -m career_radar serve -c config.yaml
 ```
 
@@ -238,7 +218,7 @@ cd E:\AIProjects\work\career-radar
 同一个服务同时提供官网岗位和 BOSS 机会。[岗位页面](http://127.0.0.1:8000/jobs) 默认合并显示两个来源，每条岗位都标明出处；按来源切换可查看各自的详细筛选和操作。BOSS 抓取结果的导入和 AI 筛选说明见 [BOSS_OPPORTUNITIES.md](BOSS_OPPORTUNITIES.md)。修改前端代码后要先在 `web/` 运行一次 `npm run build`，再重启上述服务，旧进程不会自动加载新路由或页面。
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\AIProjects\work\career-radar\scripts\run_web_windows.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "career-radar\scripts\run_web_windows.ps1"
 ```
 
 仅开发前端代码、需要热更新时才使用两个 PowerShell 窗口：后端运行上面的 `serve` 命令；`web/` 目录运行 `npm run dev`，再访问 `http://127.0.0.1:7100`。日常使用只需 8000 端口。Vite 会把 `/api` 代理到 8000 端口。FastAPI 优先托管 `web/dist`；仅为兼容旧本地目录，找不到时才回退到同级 `career-radar-web/dist`。
@@ -460,8 +440,7 @@ POST 请求不会向重定向地址重放；运行时先检查目标的 `robots.
 
 [公开来源预设](data/official_source_presets.yaml)包含已于 2026-10-04 实测的 Dify 和
 合合信息。预设不会自动加载，需核对后将公司条目加入本机配置；当前本机已接入并
-入库 71 条独立岗位。来源的届别、在读限制及实际验收见
-[官网覆盖报告](research/official-coverage-2026-10-04.md)。`evaluate_with_llm: false`
+入库 71 条独立岗位。请按各来源原始 JD 核对届别和在读限制。`evaluate_with_llm: false`
 只采集原始官网事实，能力匹配保持“待评估”，不会自动标记为适合投递。
 
 动态招聘页如果导航文字先出现、岗位列表后出现，可在该公司配置中给起始招聘页设置 `entry_wait_selector`。页面等待所选元素可见后才做内容提取；等待失败会明确报错，避免把空壳页面当成“暂无岗位”。
@@ -801,7 +780,7 @@ SMTP_PASSWORD=邮箱后台生成的授权码或应用专用密码
 先手工执行一次 `scripts\run_windows.ps1`，确认成功：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\AIProjects\work\career-radar\scripts\run_windows.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "career-radar\scripts\run_windows.ps1"
 ```
 
 然后打开“任务计划程序” → “创建基本任务”：
@@ -813,13 +792,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "E:\AIProjects\work\care
 5. 添加参数：
 
    ```text
-   -NoProfile -ExecutionPolicy Bypass -File "E:\AIProjects\work\career-radar\scripts\run_windows.ps1"
+   -NoProfile -ExecutionPolicy Bypass -File "career-radar\scripts\run_windows.ps1"
    ```
 
 6. “起始于”填写项目目录：
 
    ```text
-   E:\AIProjects\work\career-radar
+   career-radar
    ```
 
 7. 笔记本建议在任务属性中取消“只有在计算机使用交流电源时才启动”。
@@ -888,47 +867,6 @@ CRON_TZ=Asia/Shanghai
 - 定期备份 `data/career_radar.db` 和 `output/`。
 - 若内存较小且官网均为静态页，把 `render_mode` 设为 `never`，无需 Chromium。
 
-## 八、运行测试
-
-开发环境安装：
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\ruff.exe check src tests --no-cache
-cd web
-npm run test
-npm run lint
-```
-
-测试完全离线，不会调用真实官网、LLM 或邮箱。
-
-打包形态的浏览器冒烟测试会把前端构建到系统临时目录，启动使用临时配置和
-SQLite 的 FastAPI，再验证设置页、LLM 付费确认边界、本地备份创建/校验/删除
-与真实日报列表：
-
-```powershell
-cd E:\AIProjects\work\career-radar
-.\.venv\Scripts\python.exe scripts\run_web_e2e.py
-```
-
-该测试不会读取项目的 `config.yaml`、`.env` 或私有资料，不会调用 LLM、
-SMTP、企业官网或其他外部地址；CI 也会执行同一脚本。
-
-## 提示词回归评测（可选）
-
-JD 提取和匹配质量依赖提示词与模型。改提示词或换模型前，可以先跑内置评测集，
-防止“页面类型误判、JD 字段漏提取”等回归悄悄出现。命令会调用当前配置的 LLM：
-
-```powershell
-.\.venv\Scripts\python.exe -m career_radar eval-prompts
-```
-
-默认运行三个固定样例（标准校招 JD、列表页、无招聘官网首页），断言页面类型、
-职位标题、地点与 JD 关键词；任何样例失败时退出码为 1，可接入定时任务或 CI。
-可用 `--limit N` 只跑前 N 个样例，用 `--output report.md` 把 Markdown 报告
-写入文件。样例定义在 `src/career_radar/prompt_eval.py`，可按自己公司新增。
-
 ## 数据库去重与变化检测说明
 
 每个岗位保存四个关键值：
@@ -948,8 +886,7 @@ SQLite 使用 WAL 模式；请勿同时启动多个相同任务。偶尔误启�
 
 数据库结构演进使用 `PRAGMA user_version` 驱动的有序迁移：新列通过
 `@_migration(版本号, 说明)` 注册到 `src/career_radar/storage.py` 的
-`MIGRATIONS`，初始化时按序应用并原子提交；测试覆盖全新库、旧库升级、
-版本回退拒绝和迁移幂等。
+`MIGRATIONS`，初始化时按序应用并原子提交，拒绝版本回退并支持重复初始化。
 
 ### 同义岗位合并（换标题重发）
 
@@ -1058,7 +995,7 @@ apprise:
 - API Key、邮箱授权码只放 `.env`，并定期轮换。
 - 如果误把 `.env` 提交到 Git，立即在供应商后台撤销旧 Key，仅删除 Git 文件并不足够。
 - CSV 已防护以 `= + - @` 开头的公式文本，但打开任何来自网页的数据时仍不要点击可疑链接。
-- 更新依赖前先在测试环境运行 `pytest`；生产服务器建议保留可回滚的虚拟环境和数据库备份。
+- 更新依赖前先在本机验证安装与启动；生产服务器建议保留可回滚的虚拟环境和数据库备份。
 
 ## 后台任务与网络安全底座
 
@@ -1133,7 +1070,7 @@ HTTP 304，或正文哈希未变化时，会复用上次岗位和后续链接，
 .\.venv\Scripts\python.exe scripts/audit_official_screening.py --config config.yaml
 ```
 
-本轮数据结果与限制见 [官网筛选验收记录](research/official-screening-2026-10-05.md)。
+
 本功能应用于岗位中心和总览；历史日报与推送仍按原有筛选配置处理。
 
 ## License

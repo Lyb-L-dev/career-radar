@@ -55,6 +55,3 @@ Career Radar 直接使用了以下开源库，其许可证声明由各项目保�
 - [litellm](https://github.com/BerriAI/litellm)（MIT，可选安装）：
   `pip install -e ".[llm-gateway]"` 后，通过 `provider: litellm` 统一接入
   各模型供应商。
-# Frontend accessibility verification
-
-`axe-core` 4.13.0 (Deque Systems and contributors) is used only as a development/test dependency, injected by the local browser verification scripts. It is licensed under Mozilla Public License 2.0. The original license is retained in `web/node_modules/axe-core/LICENSE`; upstream: https://github.com/dequelabs/axe-core/tree/v4.13.0. It is not imported into the production application bundle.

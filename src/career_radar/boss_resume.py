@@ -15,7 +15,6 @@ _SKILL_NAMES = (
     "Scikit-learn", "RAG", "Embedding", "pgvector", "LangGraph", "Playwright",
     "Pytest", "Docker", "n8n", "Git", "Ollama", "Qwen",
 )
-_PROJECT_NAMES = ("微博舆情", "JarvisOS", "CareerRadar")
 _PHONE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _URL = re.compile(r"(?:https?://|github\.com/)[^\s，。；;]+", re.I)
@@ -61,10 +60,21 @@ def extract_resume_facts(path: Path) -> ResumeFacts:
     )
     projects: list[str] = []
     for index, paragraph in enumerate(paragraphs):
-        if not any(paragraph.casefold().startswith(name.casefold()) for name in _PROJECT_NAMES):
+        # Identify project headings from structure and technical evidence instead
+        # of embedding a particular user's project names in the public source.
+        if len(paragraph) > 160 or any(
+            marker in paragraph for marker in ("个人信息", "教育", "学校", "姓名", "电话", "邮箱", "求职", "技能")
+        ) or _PHONE.search(paragraph) or _EMAIL.search(paragraph):
             continue
         nearby = paragraphs[index + 1 : index + 4]
         following = next((text for text in nearby if len(text) >= 110), nearby[0] if nearby else "")
+        heading_context = f"{paragraph} {nearby[0] if nearby else ''}".casefold()
+        has_technology = any(name.casefold() in heading_context for name in skills)
+        if not has_technology or not (
+            ("项目" in paragraph and paragraph not in {"项目经历", "项目经验", "项目"})
+            or len(following) >= 110
+        ):
+            continue
         technologies = nearby[0] if nearby and nearby[0] != following and "/" in nearby[0] else ""
         evidence = _clean(f"{paragraph[:140]}；技术：{technologies[:130]}；项目：{following[:300]}")
         if evidence and evidence not in projects:

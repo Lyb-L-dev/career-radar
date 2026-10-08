@@ -2,7 +2,6 @@ import path from "path"
 import { fileURLToPath } from "node:url"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
-import { inspectAttr } from 'kimi-plugin-inspect-react'
 
 const configDir = path.dirname(fileURLToPath(import.meta.url))
 
@@ -10,7 +9,7 @@ const configDir = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   // 生产环境由 FastAPI 在站点根路径托管，绝对资源路径可支持任意 SPA 深链接刷新。
   base: '/',
-  plugins: [inspectAttr(), react()],
+  plugins: [react()],
   server: {
     port: 7100,
     proxy: {

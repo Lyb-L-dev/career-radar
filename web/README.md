@@ -1,6 +1,6 @@
 # Career Radar · Web 管理端
 
-Career Radar 的 React 管理端，位于 Python 项目同一仓库的 `web/` 目录，默认连接项目提供的本地 FastAPI。画像来自 `config.yaml`，岗位与状态来自 SQLite，企业来自 YAML，运行记录由真实扫描任务写入；页面不会默认展示 Mock 结果。
+Career Radar 的 React 管理端，位于 Python 项目同一仓库的 `web/` 目录，默认连接项目提供的本地 FastAPI。画像来自 `config.yaml`，岗位与状态来自 SQLite，企业来自 YAML，运行记录由真实扫描任务写入；页面只展示后端返回的数据。
 
 ## 技术栈
 
@@ -15,12 +15,12 @@ Career Radar 的 React 管理端，位于 Python 项目同一仓库的 `web/` �
 先构建前端，再让 FastAPI 同时托管 API 与静态页面：
 
 ```powershell
-cd E:\AIProjects\work\career-radar\web
+cd career-radar\web
 npm ci
 npm run lint
 npm run build
 
-cd E:\AIProjects\work\career-radar
+cd ..
 .\.venv\Scripts\python.exe -m career_radar serve -c config.yaml
 ```
 
@@ -31,7 +31,7 @@ cd E:\AIProjects\work\career-radar
 FastAPI 保持运行，在另一个 PowerShell 窗口执行：
 
 ```powershell
-cd E:\AIProjects\work\career-radar\web
+cd career-radar\web
 npm run dev
 ```
 
@@ -40,11 +40,10 @@ npm run dev
 默认配置等价于：
 
 ```dotenv
-VITE_USE_MOCK=false
 VITE_API_BASE_URL=/api
 ```
 
-仅在纯 UI 演示时复制 `.env.example` 并设置 `VITE_USE_MOCK=true`。Mock 分支仍保留用于离线设计预览，但不会在未显式配置时启用。
+公开版本只连接真实 API，不包含模拟画像、模拟岗位或模拟运行结果。
 
 ## 数据与安全边界
 
@@ -62,4 +61,4 @@ npm run lint
 npm run build
 ```
 
-当前 Vite 会提示主 bundle 超过 500 kB，这是性能优化提醒，不影响构建和功能；后续可按路由拆包。
+前端按路由拆包；生产服务托管构建后的 web/dist。

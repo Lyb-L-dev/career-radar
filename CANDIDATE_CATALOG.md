@@ -89,7 +89,7 @@
 普通使用不需要运行导入脚本，仓库已包含生成后的 JSON。维护者更新官方附件时执行：
 
 ```powershell
-cd E:\AIProjects\work\career-radar
+cd career-radar
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 .\.venv\Scripts\python.exe scripts\import_miit_candidates.py `
   --pdf-dir tmp\pdfs `
